@@ -95,7 +95,9 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
             .contacts
             .describe(&sender.device, Some(&sender.name))
     );
-    eprintln!("  via {}", route.path.describe());
+    if let Some(path) = node.path_to(&route.peer) {
+        eprintln!("  How: {path}");
+    }
 
     // Everything lands in a hidden staging folder first, so an interrupted
     // transfer never leaves a half-written file under the real name.

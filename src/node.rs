@@ -5,7 +5,7 @@
 //! reservations, connection events) through watch and broadcast channels.
 
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -22,6 +22,8 @@ use libp2p::{
 };
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::nat::{self, NatKind};
+use crate::path::PathKind;
 use crate::{Error, Result};
 
 /// Sent in libp2p Identify, so beemr nodes can recognise each other.
@@ -106,6 +108,19 @@ pub struct RelayedAddr {
     pub full: bool,
 }
 
+/// Port mapping through PCP or NAT-PMP (UPnP is tracked separately).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PortMapState {
+    #[default]
+    Pending,
+    Disabled,
+    /// Mapped, with the protocol that did it ("PCP" or "NAT-PMP").
+    Mapped(&'static str),
+    /// The router mapped a port, but its own address isn't public (carrier NAT).
+    NotRoutable,
+    Unavailable,
+}
+
 /// What the node currently knows about its own reachability.
 #[derive(Clone, Debug, Default)]
 pub struct Status {
@@ -115,6 +130,8 @@ pub struct Status {
     pub external: Vec<Multiaddr>,
     pub relayed: Vec<RelayedAddr>,
     pub upnp: UpnpState,
+    pub port_map: PortMapState,
+    pub nat: NatKind,
     pub connected_peers: usize,
 }
 
@@ -126,6 +143,15 @@ impl Status {
         self.external
             .iter()
             .any(|a| ip_of(a).is_some_and(|ip| is_global(&ip)))
+    }
+
+    /// How the router opened a port for us, if it did.
+    pub fn mapping_method(&self) -> Option<&'static str> {
+        match (self.upnp, self.port_map) {
+            (_, PortMapState::Mapped(how)) => Some(how),
+            (UpnpState::Mapped, _) => Some("UPnP"),
+            _ => None,
+        }
     }
 }
 
@@ -156,12 +182,17 @@ enum Command {
     Dial(DialOpts),
     Close(ConnectionId),
     AddRelayCandidates(Vec<Multiaddr>),
+    /// An address confirmed reachable by port mapping.
+    AddExternal(Multiaddr),
+    SetPortMap(PortMapState),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ConnInfo {
     peer: PeerId,
     relay: Option<PeerId>,
+    /// The remote address, or for relayed connections the circuit address.
+    addr: Multiaddr,
 }
 
 /// State shared between the swarm task and handles.
@@ -170,12 +201,17 @@ struct Shared {
     connections: HashMap<ConnectionId, ConnInfo>,
     /// Whether each relay we've used allows full transfers.
     relay_full: HashMap<PeerId, bool>,
+    /// Our external QUIC address as each peer reported seeing it.
+    observed: HashMap<PeerId, SocketAddr>,
+    /// Peers we reached directly by hole punching or port prediction.
+    punched: HashMap<PeerId, PathKind>,
 }
 
 /// Handle to a running libp2p node.
 #[derive(Clone)]
 pub struct Node {
     peer_id: PeerId,
+    key_seed: [u8; 32],
     port: u16,
     control: libp2p_stream::Control,
     commands: mpsc::UnboundedSender<Command>,
@@ -201,11 +237,9 @@ struct Behaviour {
 impl Node {
     /// Start a node with a fresh, per-process network identity.
     pub async fn start(options: NodeOptions) -> Result<Node> {
-        let keypair = match options.key_seed {
-            Some(mut seed) => libp2p::identity::Keypair::ed25519_from_bytes(&mut seed)
-                .map_err(|e| Error::new(e.to_string()))?,
-            None => libp2p::identity::Keypair::generate_ed25519(),
-        };
+        let key_seed = options.key_seed.unwrap_or_else(crate::crypto::random);
+        let keypair = libp2p::identity::Keypair::ed25519_from_bytes(&mut key_seed.clone())
+            .map_err(|e| Error::new(e.to_string()))?;
         let peer_id = keypair.public().to_peer_id();
         let public = options.public_network;
         let use_upnp = options.upnp;
@@ -282,6 +316,11 @@ impl Node {
             } else {
                 UpnpState::Disabled
             },
+            port_map: if use_upnp {
+                PortMapState::Pending
+            } else {
+                PortMapState::Disabled
+            },
             ..Status::default()
         });
         let (events, _) = broadcast::channel(256);
@@ -305,11 +344,17 @@ impl Node {
             } else {
                 UpnpState::Disabled
             },
+            port_map: if use_upnp {
+                PortMapState::Pending
+            } else {
+                PortMapState::Disabled
+            },
         };
         tokio::spawn(driver.run());
 
         let node = Node {
             peer_id,
+            key_seed,
             port,
             control,
             commands,
@@ -317,6 +362,9 @@ impl Node {
             events,
             shared,
         };
+        if use_upnp {
+            tokio::spawn(crate::portmap::run(node.clone(), port));
+        }
         // Wait until the listeners report their concrete addresses.
         let mut status = node.status();
         let _ = tokio::time::timeout(
@@ -329,6 +377,49 @@ impl Node {
 
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
+    }
+
+    /// The seed of this node's network identity, so a second endpoint can
+    /// share it (used by port prediction).
+    pub fn key_seed(&self) -> [u8; 32] {
+        self.key_seed
+    }
+
+    pub fn add_external(&self, addr: Multiaddr) {
+        let _ = self.commands.send(Command::AddExternal(addr));
+    }
+
+    pub fn set_port_map(&self, state: PortMapState) {
+        let _ = self.commands.send(Command::SetPortMap(state));
+    }
+
+    /// Record that a peer was reached by hole punching or port prediction.
+    pub fn mark_punched(&self, peer: PeerId, how: PathKind) {
+        self.shared().punched.insert(peer, how);
+    }
+
+    /// How we are currently connected to `peer`, preferring direct
+    /// connections. `None` if not connected.
+    pub fn path_to(&self, peer: &PeerId) -> Option<PathKind> {
+        let shared = self.shared();
+        let conns: Vec<&ConnInfo> = shared
+            .connections
+            .values()
+            .filter(|c| c.peer == *peer)
+            .collect();
+        if let Some(direct) = conns.iter().find(|c| c.relay.is_none()) {
+            if let Some(how) = shared.punched.get(peer) {
+                return Some(how.clone());
+            }
+            return Some(match ip_of(&direct.addr) {
+                Some(ip) if is_lan(&ip) || ip.is_loopback() => PathKind::Lan,
+                Some(IpAddr::V6(_)) => PathKind::Ipv6,
+                _ => PathKind::Internet { mapped: None },
+            });
+        }
+        conns.first().map(|c| PathKind::Relay {
+            addr: ip_of(&c.addr).filter(is_global),
+        })
     }
 
     pub fn port(&self) -> u16 {
@@ -513,6 +604,19 @@ pub fn relay_transport_ok(addr: &Multiaddr) -> bool {
     is_plain_transport(&relay_part)
 }
 
+/// A public IPv4 QUIC address as reported by a peer (`/ip4/…/udp/…/quic-v1`).
+fn observed_quic_v4(addr: &Multiaddr) -> Option<SocketAddr> {
+    let mut iter = addr.iter();
+    match (iter.next(), iter.next(), iter.next()) {
+        (Some(Protocol::Ip4(ip)), Some(Protocol::Udp(port)), Some(Protocol::QuicV1))
+            if is_global(&IpAddr::V4(ip)) =>
+        {
+            Some(SocketAddr::new(IpAddr::V4(ip), port))
+        }
+        _ => None,
+    }
+}
+
 pub fn is_relayed(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| p == Protocol::P2pCircuit)
 }
@@ -586,6 +690,7 @@ struct Driver {
     listen: Vec<Multiaddr>,
     external: Vec<Multiaddr>,
     upnp: UpnpState,
+    port_map: PortMapState,
 }
 
 impl Driver {
@@ -621,6 +726,17 @@ impl Driver {
             }
             Command::Close(conn) => {
                 self.swarm.close_connection(conn);
+            }
+            Command::AddExternal(addr) => {
+                self.swarm.add_external_address(addr.clone());
+                if !self.external.contains(&addr) {
+                    self.external.push(addr);
+                }
+                self.publish_status();
+            }
+            Command::SetPortMap(state) => {
+                self.port_map = state;
+                self.publish_status();
             }
             Command::AddRelayCandidates(addrs) => {
                 for addr in addrs {
@@ -710,14 +826,19 @@ impl Driver {
                 ..r.clone()
             })
             .collect();
+        let observed = shared.observed.clone();
         drop(shared);
-        self.status.send_replace(Status {
+        let mut status = Status {
             listen: self.listen.clone(),
             external: self.external.clone(),
             relayed,
             upnp: self.upnp,
+            port_map: self.port_map,
+            nat: NatKind::Unknown,
             connected_peers,
-        });
+        };
+        status.nat = nat::classify(status.directly_reachable(), &observed);
+        self.status.send_replace(status);
     }
 
     fn on_swarm_event(&mut self, event: SwarmEvent<BehaviourEvent>) {
@@ -800,11 +921,15 @@ impl Driver {
                 endpoint,
                 ..
             } => {
-                let relay = if endpoint.is_relayed() {
-                    match &endpoint {
-                        ConnectedPoint::Dialer { address, .. } => relay_of(address),
-                        ConnectedPoint::Listener { local_addr, .. } => relay_of(local_addr),
+                let addr = match (&endpoint, endpoint.is_relayed()) {
+                    (ConnectedPoint::Dialer { address, .. }, _) => address.clone(),
+                    (ConnectedPoint::Listener { local_addr, .. }, true) => local_addr.clone(),
+                    (ConnectedPoint::Listener { send_back_addr, .. }, false) => {
+                        send_back_addr.clone()
                     }
+                };
+                let relay = if endpoint.is_relayed() {
+                    relay_of(&addr)
                 } else {
                     None
                 };
@@ -813,6 +938,7 @@ impl Driver {
                     ConnInfo {
                         peer: peer_id,
                         relay,
+                        addr,
                     },
                 );
                 let _ = self.events.send(NodeEvent::Connected {
@@ -852,6 +978,10 @@ impl Driver {
     fn on_behaviour_event(&mut self, event: BehaviourEvent) {
         match event {
             BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. }) => {
+                if let Some(seen) = observed_quic_v4(&info.observed_addr) {
+                    self.shared().observed.insert(peer_id, seen);
+                    self.publish_status();
+                }
                 tracing::debug!(
                     %peer_id,
                     agent = %info.agent_version,
@@ -895,6 +1025,11 @@ impl Driver {
                 result,
             }) => {
                 tracing::debug!(%remote_peer_id, ?result, "hole punching finished");
+                if result.is_ok() {
+                    self.shared()
+                        .punched
+                        .insert(remote_peer_id, PathKind::HolePunched);
+                }
                 let _ = self.events.send(NodeEvent::HolePunch {
                     peer: remote_peer_id,
                     success: result.is_ok(),

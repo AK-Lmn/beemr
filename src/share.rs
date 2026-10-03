@@ -14,6 +14,7 @@ use tokio::time::Instant;
 use crate::discovery::{AddressRecord, Dht};
 use crate::identity::DeviceId;
 use crate::node::{self, Mode, Node, NodeOptions, Status, UpnpState};
+use crate::path::PathKind;
 use crate::profile::Profile;
 use crate::progress::Progress;
 use crate::proto::{self, EntryKind, Framed, Message, Side, MAX_CHUNK};
@@ -77,6 +78,7 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
         lan: node.lan_ips(!network.public),
     };
     let share = Arc::new(Share {
+        node: node.clone(),
         secret,
         local_peer: node.peer_id(),
         profile,
@@ -191,12 +193,12 @@ pub async fn report_reachability(mut status: tokio::sync::watch::Receiver<Status
             }
             if !direct && s.directly_reachable() {
                 direct = true;
-                let how = if s.upnp == UpnpState::Mapped {
-                    "your router opened a port automatically (UPnP)"
-                } else {
-                    "this device is directly reachable"
-                };
-                eprintln!("  ✓ Reachable from the internet: {how}");
+                match s.mapping_method() {
+                    Some(how) => eprintln!(
+                        "  ✓ Reachable from the internet: your router opened a port automatically ({how})"
+                    ),
+                    None => eprintln!("  ✓ Reachable from the internet: this device is directly reachable"),
+                }
             }
             if !punch && s.relayed.iter().any(|r| !r.full) {
                 punch = true;
@@ -247,6 +249,11 @@ pub fn record_from_status(
             addrs.push(a.clone());
         }
     };
+    for addr in &status.listen {
+        if node::ip_of(addr).is_some_and(|ip| ip.is_ipv6() && node::is_global(&ip)) {
+            push(addr);
+        }
+    }
     status.external.iter().for_each(&mut push);
     for addr in &status.listen {
         if node::ip_of(addr).is_some_and(|ip| {
@@ -435,6 +442,7 @@ fn permission_bits(meta: &fs::Metadata) -> u32 {
 
 /// State shared by all connection tasks.
 struct Share {
+    node: Node,
     secret: ShareSecret,
     local_peer: PeerId,
     profile: Profile,
@@ -521,6 +529,17 @@ impl Share {
         }
     }
 
+    /// How `peer` is connected to us, including how our router opened a
+    /// port when the connection came in over a mapped port.
+    fn path_to(&self, peer: &PeerId) -> Option<PathKind> {
+        match self.node.path_to(peer)? {
+            PathKind::Internet { mapped: None } => Some(PathKind::Internet {
+                mapped: self.node.status().borrow().mapping_method(),
+            }),
+            other => Some(other),
+        }
+    }
+
     async fn handle(self: Arc<Self>, peer: PeerId, stream: Stream) {
         let mut framed = Framed::new(stream);
         let profile = &self.profile;
@@ -580,6 +599,9 @@ impl Share {
         };
 
         eprintln!("  → Sending to {who}");
+        if let Some(path) = self.path_to(&peer) {
+            eprintln!("    How: {path}");
+        }
         match send_content(&mut framed, &self.content).await {
             Ok(()) => {
                 slot.succeeded = true;

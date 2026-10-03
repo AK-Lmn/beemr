@@ -30,24 +30,6 @@ const RERESOLVE_EVERY: Duration = Duration::from_secs(10);
 /// How long QUIC relay circuits get before TCP ones are tried too.
 const TCP_CIRCUIT_DELAY: Duration = Duration::from_secs(3);
 
-/// How a connection was made, for the user.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Path {
-    Direct,
-    HolePunched,
-    Relayed,
-}
-
-impl Path {
-    pub fn describe(self) -> &'static str {
-        match self {
-            Path::Direct => "direct connection",
-            Path::HolePunched => "direct connection (through the firewall via hole punching)",
-            Path::Relayed => "relayed connection (end-to-end encrypted)",
-        }
-    }
-}
-
 /// Where to look for a device.
 pub struct Target {
     /// Addresses to dial without knowing the peer id (from a ticket).
@@ -59,7 +41,6 @@ pub struct Target {
 #[derive(Clone, Copy, Debug)]
 pub struct Route {
     pub peer: PeerId,
-    pub path: Path,
 }
 
 /// Connect to a target, returning the peer to open streams to. On success,
@@ -145,6 +126,17 @@ pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<R
             }
             _ = &mut deadline => return Err(ladder.diagnose()),
         }
+    }
+}
+
+/// Dial order: global IPv6 first (no NAT in the way), then the local
+/// network, then other direct addresses, then relays.
+fn dial_preference(addr: &Multiaddr) -> u8 {
+    match node::ip_of(addr) {
+        _ if node::is_relayed(addr) => 3,
+        Some(ip) if ip.is_ipv6() && node::is_global(&ip) => 0,
+        Some(ip) if node::is_lan(&ip) => 1,
+        _ => 2,
     }
 }
 
@@ -247,8 +239,9 @@ impl Ladder<'_> {
         // runs over QUIC, so we learn a QUIC address to hole-punch with (QUIC
         // punches through NATs far more reliably than TCP). TCP circuits are
         // a fallback for networks that block UDP, dialled a moment later.
-        let (now, later): (Vec<Multiaddr>, Vec<Multiaddr>) = record
-            .addrs
+        let mut addrs = record.addrs;
+        addrs.sort_by_key(dial_preference);
+        let (now, later): (Vec<Multiaddr>, Vec<Multiaddr>) = addrs
             .into_iter()
             .partition(|a| !node::is_relayed(a) || circuit_uses_quic(a));
         self.dial_peer(peer, now, false);
@@ -321,12 +314,7 @@ impl Ladder<'_> {
                 .collect();
             if !direct.is_empty() {
                 self.keep_only(&peer, &direct).await;
-                let path = if self.seen_relayed {
-                    Path::HolePunched
-                } else {
-                    Path::Direct
-                };
-                return Ok(Some(Route { peer, path }));
+                return Ok(Some(Route { peer }));
             }
             if self.hole_punch_failed {
                 let full: Vec<ConnectionId> = conns
@@ -336,10 +324,7 @@ impl Ladder<'_> {
                     .collect();
                 if !full.is_empty() {
                     self.keep_only(&peer, &full).await;
-                    return Ok(Some(Route {
-                        peer,
-                        path: Path::Relayed,
-                    }));
+                    return Ok(Some(Route { peer }));
                 }
                 if self.full_relay_dials.is_empty() {
                     return Err(no_route_error());

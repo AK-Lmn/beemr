@@ -3,7 +3,8 @@
 use std::time::Duration;
 
 use crate::discovery::Dht;
-use crate::node::{self, Mode, Node, NodeOptions, UpnpState};
+use crate::nat::NatKind;
+use crate::node::{self, Mode, Node, NodeOptions, PortMapState, UpnpState};
 use crate::profile::Profile;
 use crate::Result;
 
@@ -42,16 +43,14 @@ pub async fn run(profile: Profile) -> Result<()> {
     let ipv6 = ips.iter().any(|ip| ip.is_ipv6() && node::is_global(ip));
     let limited = status.relayed.iter().filter(|r| !r.full).count();
     let full = status.relayed.iter().filter(|r| r.full).count();
-    let mark = |ok: bool| if ok { "✓" } else { "✗" };
+    let line = |ok: bool, label: &str, value: String| {
+        println!("{} {label:<17} {value}", if ok { "✓" } else { "✗" });
+    };
 
-    println!(
-        "Device:            \"{}\" ({})",
-        profile.name,
-        profile.identity.id()
-    );
-    println!(
-        "{} Local network     {}",
-        mark(!lan.is_empty()),
+    println!("Device: \"{}\" ({})\n", profile.name, profile.identity.id());
+    line(
+        !lan.is_empty(),
+        "Local network",
         if lan.is_empty() {
             "no LAN address".to_string()
         } else {
@@ -59,61 +58,71 @@ pub async fn run(profile: Profile) -> Result<()> {
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
-        }
+        },
     );
-    println!(
-        "{} Public address    {}",
-        mark(public_ip.is_some()),
-        public_ip.map_or("unknown (DHT unreachable?)".to_string(), |a| a
-            .ip()
-            .to_string())
+    line(
+        public_ip.is_some(),
+        "Public address",
+        public_ip.map_or("unknown (DHT unreachable?)".to_string(), |a| {
+            a.ip().to_string()
+        }),
     );
-    println!(
-        "{} IPv6              {}",
-        mark(ipv6),
-        if ipv6 { "available" } else { "not available" }
+    line(
+        ipv6,
+        "IPv6",
+        if ipv6 { "available" } else { "not available" }.to_string(),
     );
-    println!(
-        "{} Router (UPnP)     {}",
-        mark(status.upnp == UpnpState::Mapped),
-        match status.upnp {
-            UpnpState::Mapped => "opened a port automatically",
-            UpnpState::NotFound => "no UPnP router found",
-            UpnpState::NotRoutable => "router is itself behind another NAT",
-            UpnpState::Disabled => "disabled",
-            UpnpState::Pending => "no answer yet",
-        }
+    let mapped = status.mapping_method();
+    line(
+        mapped.is_some(),
+        "Router port",
+        match (mapped, status.upnp, status.port_map) {
+            (Some(how), _, _) => format!("opened automatically ({how})"),
+            (None, UpnpState::NotRoutable, _) | (None, _, PortMapState::NotRoutable) => {
+                "router is itself behind another NAT (carrier-grade NAT)".to_string()
+            }
+            (None, UpnpState::Disabled, _) => "port mapping disabled".to_string(),
+            _ => "router didn't open a port (no UPnP, PCP or NAT-PMP)".to_string(),
+        },
     );
-    println!(
-        "{} Direct reachability {}",
-        mark(status.directly_reachable()),
+    line(
+        matches!(status.nat, NatKind::Reachable | NatKind::Cone),
+        "Network type",
+        status.nat.describe().to_string(),
+    );
+    line(
+        status.directly_reachable(),
+        "Direct reach",
         if status.directly_reachable() {
             "others can connect straight to this device"
         } else {
             "behind a firewall/NAT (normal for home and mobile networks)"
         }
+        .to_string(),
     );
-    println!(
-        "{} Hole punching     {}",
-        mark(limited > 0),
+    line(
+        limited > 0,
+        "Hole punching",
         if limited > 0 {
             format!("ready via {limited} public relay(s)")
         } else {
             "no public relay reserved yet".to_string()
-        }
+        },
     );
-    println!(
-        "{} beemr relays   {}",
-        mark(full > 0),
+    line(
+        full > 0,
+        "beemr relays",
         if full > 0 {
             format!("{full} available as a fallback")
         } else {
             "none found (only needed when hole punching fails)".to_string()
-        }
+        },
     );
     println!();
     let verdict = if status.directly_reachable() {
         "Excellent: other devices can always reach this one."
+    } else if status.nat == NatKind::Symmetric && full == 0 {
+        "Fair: strict NAT. Port prediction works when the other side isn't strict too; otherwise a relay or Tor is used."
     } else if limited > 0 && full > 0 {
         "Good: connections work through hole punching, with a relay as backup."
     } else if limited > 0 {
