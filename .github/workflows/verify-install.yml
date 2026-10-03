@@ -34,8 +34,11 @@ jobs:
           beemr --version | grep -q "${VERSION_TAG#v}"
           beemr setup --name "Snap CI" --no-service
           beemr id
-      - name: Background service started by the snap
-        run: snap services beemr
+      - name: beemr setup starts the background service (snap autostart)
+        run: |
+          beemr setup --name "Snap CI service"
+          for _ in $(seq 1 20); do beemr daemon status && exit 0; sleep 1; done
+          echo "::error::the background service did not start"; exit 1
 
   install:
     name: Install on ${{ matrix.distro }}
