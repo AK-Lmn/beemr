@@ -17,3 +17,22 @@ Description: Peer-to-peer file and message sharing.
  accounts, no setup. Connects directly, punches through NATs, and falls
  back to relaying through other beemr devices. End-to-end encrypted.
 
+Package: beemr
+Architecture: arm64
+Version: 0.2.1-1
+Priority: optional
+Section: net
+Maintainer: Osman Ahmadzai <osmanahmadxai@gmail.com>
+Installed-Size: 10703
+Filename: pool/main/b/beemr/beemr_0.2.1-1_arm64.deb
+Size: 5494318
+MD5sum: 966c2bcb50e0e22c8166018160168b19
+SHA1: e7121b1ba2f32d30d55c21c0a1365b015d8097c3
+SHA256: 3355079f2660ce363898f0c8553618ac74c5d82ba02bf811224f8e6d6f1946d3
+SHA512: ac758932b07acfc3062ce5bff317aba7d0fc7de7273259c8963ed18e2af94b820cab3184e90323b85d1f25842c28a18fb8a20514dc4642b260d3d81e02359234
+Homepage: https://github.com/osmanahmadxai/beemr
+Description: Peer-to-peer file and message sharing.
+ Send files and messages straight to another device: no servers, no
+ accounts, no setup. Connects directly, punches through NATs, and falls
+ back to relaying through other beemr devices. End-to-end encrypted.
+
