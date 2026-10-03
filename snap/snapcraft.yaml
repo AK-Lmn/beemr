@@ -11,6 +11,7 @@ description: |
   beemr share photos/      # prints a command for the other device
   beemr msg sara "hi"      # messages arrive in `beemr inbox`
 license: MIT
+icon: snap/gui/beemr.png
 website: https://github.com/osmanahmadxai/beemr
 source-code: https://github.com/osmanahmadxai/beemr
 issues: https://github.com/osmanahmadxai/beemr/issues

@@ -1,6 +1,8 @@
-# beemr
+<p align="center">
+  <img src="docs/beemr-logo.png" alt="beemr" width="560">
+</p>
 
-**Send files and messages straight to another device. No servers, no accounts, no setup.**
+<p align="center"><b>Send files and messages straight to another device. No servers, no accounts, no setup.</b></p>
 
 ```console
 $ beemr share vacation-photos/
