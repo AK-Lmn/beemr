@@ -16,16 +16,14 @@ pub const PROTOCOL: StreamProtocol = StreamProtocol::new("/beemr/2");
 pub const MAX_CHUNK: usize = 64 * 1024;
 /// Upper bound on one encoded message; larger frames are rejected before allocating.
 const MAX_MESSAGE: usize = 128 * 1024;
-/// Longest text message accepted.
-pub const MAX_TEXT: usize = 16 * 1024;
 
 /// Which end of a stream we are. Bound into identity signatures so a
 /// signature from one side can never be replayed as the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
-    /// Opened the stream: a receiver downloading, or a device sending a message.
+    /// Opened the stream: a receiver downloading.
     Initiator,
-    /// Accepted the stream: a sharer, or a device receiving a message.
+    /// Accepted the stream: a sharer.
     Responder,
 }
 
@@ -86,13 +84,6 @@ pub enum Message {
     Download {
         proof: [u8; 32],
     },
-    /// A text message.
-    Text {
-        sent_at: u64,
-        body: String,
-    },
-    /// The text message was stored in the recipient's inbox.
-    Delivered,
 }
 
 mod tag {
@@ -104,8 +95,7 @@ mod tag {
     pub const ACK: u8 = 6;
     pub const FAIL: u8 = 7;
     pub const DOWNLOAD: u8 = 8;
-    pub const TEXT: u8 = 9;
-    pub const DELIVERED: u8 = 10;
+    // 9 and 10 were text messages, removed in 0.3; don't reuse them.
 }
 
 impl Message {
@@ -165,12 +155,6 @@ impl Message {
                 out.push(tag::DOWNLOAD);
                 out.extend_from_slice(proof);
             }
-            Message::Text { sent_at, body } => {
-                out.push(tag::TEXT);
-                out.extend_from_slice(&sent_at.to_be_bytes());
-                out.extend_from_slice(body.as_bytes());
-            }
-            Message::Delivered => out.push(tag::DELIVERED),
         }
         out
     }
@@ -212,11 +196,6 @@ impl Message {
             tag::DOWNLOAD => Message::Download {
                 proof: r.array().ok_or_else(malformed)?,
             },
-            tag::TEXT => Message::Text {
-                sent_at: r.u64().ok_or_else(malformed)?,
-                body: r.rest_str().ok_or_else(malformed)?,
-            },
-            tag::DELIVERED => Message::Delivered,
             _ => return Err(malformed()),
         };
         if !r.0.is_empty() {
@@ -437,11 +416,6 @@ mod tests {
             Message::Ack,
             Message::Fail("nope".into()),
             Message::Download { proof: [5; 32] },
-            Message::Text {
-                sent_at: 1_700_000_000,
-                body: "hi 👋".into(),
-            },
-            Message::Delivered,
         ];
         for msg in messages {
             assert_eq!(Message::decode(msg.encode()).unwrap(), msg);

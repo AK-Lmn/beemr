@@ -1,4 +1,4 @@
-//! beemr: direct, end-to-end encrypted file sharing and messaging between devices.
+//! beemr: direct, end-to-end encrypted file sharing between devices.
 //!
 //! There are no servers. Devices connect directly when they can (same network,
 //! IPv6, a UPnP-opened port), punch through NATs with the help of public relays
@@ -19,13 +19,11 @@ macro_rules! bail {
 pub mod config;
 pub mod connect;
 pub mod crypto;
-pub mod daemon;
 pub mod discovery;
 pub mod doctor;
 mod error;
 pub mod get;
 pub mod identity;
-pub mod message;
 pub mod node;
 pub mod profile;
 mod progress;

@@ -50,23 +50,21 @@ const RELAY_SEARCH_INTERVAL: Duration = Duration::from_secs(20);
 /// What the node is for, which decides which services it runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Downloads or sends a message: only dials out.
+    /// Downloads: only dials out.
     Client,
     /// Serves a share: must be reachable, so it reserves relays.
     Share,
-    /// The background service: reachable, and relays for others when it can.
-    Daemon,
     /// A dedicated relay.
     Relay,
 }
 
 impl Mode {
     fn reserves_relays(self) -> bool {
-        matches!(self, Mode::Share | Mode::Daemon)
+        self == Mode::Share
     }
 
     fn serves_relay(self) -> bool {
-        matches!(self, Mode::Daemon | Mode::Relay)
+        self == Mode::Relay
     }
 }
 

@@ -9,7 +9,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// A private DHT shared by the tests that need device discovery.
 fn testnet() -> &'static Vec<String> {
@@ -23,8 +23,8 @@ fn testnet() -> &'static Vec<String> {
         .1
 }
 
-/// A simulated device: its own config folder (identity, name, contacts,
-/// inbox) and a folder downloads are saved into.
+/// A simulated device: its own config folder (identity, name, contacts)
+/// and a folder downloads are saved into.
 struct Device {
     root: PathBuf,
     with_dht: bool,
@@ -104,24 +104,6 @@ impl Device {
             .output()
             .unwrap()
     }
-
-    /// Run the background service.
-    fn daemon(&self) -> Running {
-        let child = self
-            .beemr()
-            .args(["daemon", "run"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        Running(Some(child))
-    }
-
-    fn inbox(&self) -> String {
-        let out = self.beemr().arg("inbox").output().unwrap();
-        assert_ok(&out);
-        String::from_utf8(out.stdout).unwrap()
-    }
 }
 
 impl Drop for Device {
@@ -154,18 +136,6 @@ fn stderr(out: &Output) -> String {
 
 fn assert_ok(out: &Output) {
     assert!(out.status.success(), "command failed:\n{}", stderr(out));
-}
-
-/// Retry `check` until it passes or the timeout expires.
-fn eventually(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if check() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(500));
-    }
-    false
 }
 
 /// Compare two directory trees by path and content.
@@ -357,64 +327,4 @@ fn finds_the_sharer_through_the_dht() {
         "found you"
     );
     assert_ok(&sharer.wait());
-}
-
-#[test]
-fn messages_arrive_in_the_inbox_with_the_sender_name() {
-    let (alice, bob) = (
-        Device::online("Alice's laptop"),
-        Device::online("Bob's desktop"),
-    );
-    let _bob_service = bob.daemon();
-    let bob_id = bob.id();
-
-    // Bob's service needs a moment to publish where it can be reached.
-    let delivered = eventually(Duration::from_secs(180), || {
-        let out = alice
-            .beemr()
-            .args(["msg", &bob_id, "hello", "from", "alice"])
-            .output()
-            .unwrap();
-        stderr(&out).contains("Delivered")
-    });
-    assert!(delivered, "message was never delivered");
-
-    let inbox = bob.inbox();
-    assert!(inbox.contains("hello from alice"), "{inbox}");
-    assert!(inbox.contains("Alice's laptop"), "{inbox}");
-    assert!(inbox.contains("not in contacts"), "{inbox}");
-
-    // Once saved as a contact, Bob sees his own name for Alice.
-    assert_ok(
-        &bob.beemr()
-            .args(["contact", "add", "Alice", &alice.id()])
-            .output()
-            .unwrap(),
-    );
-    let inbox = bob.inbox();
-    assert!(inbox.contains("Alice ·"), "{inbox}");
-    assert!(!inbox.contains("not in contacts"), "{inbox}");
-}
-
-#[test]
-fn queued_messages_are_delivered_when_the_recipient_comes_online() {
-    let (alice, bob) = (Device::online("Alice"), Device::online("Bob"));
-    let bob_id = bob.id();
-
-    // Bob is offline: the message is queued.
-    let out = alice
-        .beemr()
-        .args(["msg", &bob_id, "are you there?"])
-        .output()
-        .unwrap();
-    assert_ok(&out);
-    assert!(stderr(&out).contains("Queued"), "{}", stderr(&out));
-
-    // Both background services start; Alice's retries the queue.
-    let _bob_service = bob.daemon();
-    let _alice_service = alice.daemon();
-    let arrived = eventually(Duration::from_secs(150), || {
-        bob.inbox().contains("are you there?")
-    });
-    assert!(arrived, "queued message never arrived");
 }

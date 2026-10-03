@@ -1,15 +1,15 @@
 name: beemr
 base: core24
 adopt-info: beemr
-summary: Peer-to-peer file and message sharing
+summary: Peer-to-peer file sharing
 description: |
-  Send files and messages straight to another device: no servers, no
+  Send files and folders straight to another device: no servers, no
   accounts, no setup. beemr connects directly when it can, punches through
   home and mobile NATs when it can't, and falls back to relaying through
   other beemr devices. Everything is end-to-end encrypted.
 
   beemr share photos/      # prints a command for the other device
-  beemr msg sara "hi"      # messages arrive in `beemr inbox`
+  beemr get <ticket>       # run that command on the other device
 license: MIT
 icon: snap/gui/beemr.png
 website: https://github.com/osmanahmadxai/beemr
@@ -31,18 +31,9 @@ apps:
   beemr:
     command: bin/beemr
     environment:
-      # Keep identity, contacts and inbox across snap updates.
+      # Keep identity and contacts across snap updates.
       BEEMR_HOME: $SNAP_USER_COMMON
     plugs: [network, network-bind, home, removable-media]
-  # The background service that receives messages. `beemr setup` starts it
-  # and registers it to start at every desktop login (snap autostart).
-  daemon:
-    command: bin/beemr daemon run
-    autostart: beemr-daemon.desktop
-    environment:
-      BEEMR_HOME: $SNAP_USER_COMMON
-    plugs: [network, network-bind]
-
 parts:
   beemr:
     # The release workflow puts the static binaries in dist/ before building.

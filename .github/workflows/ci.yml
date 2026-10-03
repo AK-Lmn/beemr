@@ -96,7 +96,6 @@ jobs:
             fi
             grep -q "sent md5" lab.log && [[ "$(grep -o 'sent md5: *[0-9a-f]*' lab.log | awk '{print $3}')" == "$(grep -o 'received md5: *[0-9a-f]*' lab.log | awk '{print $3}')" ]] \
               || { echo "::error::file corrupted"; exit 1; }
-            grep -q "hello across two NATs" lab.log || { echo "::error::message not delivered"; exit 1; }
           else
             [[ $status != 0 ]] || { echo "::error::expected the transfer to fail"; exit 1; }
             grep -qE "relay|couldn't connect" lab.log || { echo "::error::expected a helpful error"; exit 1; }

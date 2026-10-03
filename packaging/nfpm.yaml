@@ -12,8 +12,8 @@ vendor: beemr
 homepage: https://github.com/osmanahmadxai/beemr
 license: MIT
 description: |
-  Peer-to-peer file and message sharing.
-  Send files and messages straight to another device: no servers, no
+  Peer-to-peer file sharing.
+  Send files and folders straight to another device: no servers, no
   accounts, no setup. Connects directly, punches through NATs, and falls
   back to relaying through other beemr devices. End-to-end encrypted.
 contents:

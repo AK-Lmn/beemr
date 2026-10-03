@@ -15,7 +15,7 @@ mkdir -p "$OUT/homebrew/Formula" "$OUT/scoop/bucket" "$OUT/aur/beemr-bin"
 
 cat > "$OUT/homebrew/Formula/beemr.rb" <<RUBY
 class Beemr < Formula
-  desc "Peer-to-peer file and message sharing. No servers, no accounts, no setup"
+  desc "Peer-to-peer file sharing. No servers, no accounts, no setup"
   homepage "https://github.com/$REPO"
   version "$VERSION"
   license "MIT"
@@ -46,11 +46,6 @@ class Beemr < Formula
     bin.install Dir["beemr-*"].first => "beemr"
   end
 
-  service do
-    run [opt_bin/"beemr", "daemon", "run"]
-    keep_alive true
-  end
-
   test do
     assert_match version.to_s, shell_output("#{bin}/beemr --version")
   end
@@ -60,7 +55,7 @@ RUBY
 cat > "$OUT/scoop/bucket/beemr.json" <<JSON
 {
     "version": "$VERSION",
-    "description": "Peer-to-peer file and message sharing. No servers, no accounts, no setup.",
+    "description": "Peer-to-peer file sharing. No servers, no accounts, no setup.",
     "homepage": "https://github.com/$REPO",
     "license": "MIT",
     "architecture": {
@@ -88,7 +83,7 @@ cat > "$OUT/aur/beemr-bin/PKGBUILD" <<PKG
 pkgname=beemr-bin
 pkgver=$VERSION
 pkgrel=1
-pkgdesc="Peer-to-peer file and message sharing. No servers, no accounts, no setup."
+pkgdesc="Peer-to-peer file sharing. No servers, no accounts, no setup."
 arch=('x86_64' 'aarch64')
 url="https://github.com/$REPO"
 license=('MIT')
@@ -106,7 +101,7 @@ PKG
 
 cat > "$OUT/aur/beemr-bin/.SRCINFO" <<SRC
 pkgbase = beemr-bin
-	pkgdesc = Peer-to-peer file and message sharing. No servers, no accounts, no setup.
+	pkgdesc = Peer-to-peer file sharing. No servers, no accounts, no setup.
 	pkgver = $VERSION
 	pkgrel = 1
 	url = https://github.com/$REPO

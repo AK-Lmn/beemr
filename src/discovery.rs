@@ -17,8 +17,6 @@ use crate::config::NetworkSettings;
 use crate::identity::{DeviceId, Identity};
 use crate::{crypto, Error, Result};
 
-/// Salt of the record that tells others how to reach a device's background service.
-pub const DEVICE_SALT: &[u8] = b"beemr/device/1";
 /// Topic under which beemr relays announce themselves.
 const RELAYS_TOPIC: &[u8] = b"beemr/relays/1";
 const RECORD_VERSION: u8 = 1;
@@ -301,8 +299,8 @@ mod tests {
             addrs: vec!["/ip4/10.0.0.1/tcp/1".parse().unwrap()],
             full_relays: vec![],
         };
-        publisher.publish(&me, DEVICE_SALT, &record).await.unwrap();
-        assert_eq!(resolver.resolve(&me.id(), DEVICE_SALT).await, Some(record));
+        publisher.publish(&me, b"test", &record).await.unwrap();
+        assert_eq!(resolver.resolve(&me.id(), b"test").await, Some(record));
         assert_eq!(resolver.resolve(&me.id(), b"other salt").await, None);
     }
 }

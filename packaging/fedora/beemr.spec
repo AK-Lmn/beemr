@@ -3,9 +3,9 @@
 # %%cargo_vendor_manifest.
 
 Name:           beemr
-Version:        0.2.2
+Version:        0.3.0
 Release:        1%{?dist}
-Summary:        Peer-to-peer file and message sharing
+Summary:        Peer-to-peer file sharing
 
 SourceLicense:  MIT
 # Licenses of the bundled Rust crates, from %%{cargo_license_summary}:
@@ -60,7 +60,7 @@ Source1:        %{url}/releases/download/v%{version}/%{name}-%{version}-vendor.t
 BuildRequires:  cargo-rpm-macros >= 26
 
 %global _description %{expand:
-beemr sends files and messages straight to another device, with no servers,
+beemr sends files and folders straight to another device, with no servers,
 accounts or setup. It connects directly when it can, punches through home and
 mobile NATs when it can't, and falls back to relaying through other beemr
 devices. Devices find each other through the BitTorrent Mainline DHT, and all
@@ -94,5 +94,5 @@ install -Dpm 0644 docs/%{name}.1 %{buildroot}%{_mandir}/man1/%{name}.1
 %{_mandir}/man1/%{name}.1*
 
 %changelog
-* Sat Oct 03 2026 Osman Ahmadzai <osmanahmadxai@gmail.com> - 0.2.2-1
+* Sat Oct 03 2026 Osman Ahmadzai <osmanahmadxai@gmail.com> - 0.3.0-1
 - Initial package

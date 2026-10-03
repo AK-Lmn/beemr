@@ -1,6 +1,6 @@
 .TH BEEMR 1 2026-10-03 "beemr" "User Commands"
 .SH NAME
-beemr \- peer\-to\-peer file and message sharing
+beemr \- peer\-to\-peer file sharing
 .SH SYNOPSIS
 .B beemr share
 .I path
@@ -19,20 +19,11 @@ beemr \- peer\-to\-peer file and message sharing
 .RB [ \-o
 .IR folder ]
 .br
-.B beemr msg
-.I contact\-or\-id message
-.br
-.B beemr inbox
-.RB [ \-\-all ]
-.br
-.B beemr reply
-.I number message
-.br
 .B beemr
-.RB { setup | id | name | contact | daemon | relay | doctor | help | version }
+.RB { setup | id | name | contact | relay | doctor | help | version }
 .SH DESCRIPTION
 .B beemr
-sends files and messages straight to another device, with no servers,
+sends files and folders straight to another device, with no servers,
 accounts or setup.
 It connects directly when it can (same network, IPv6, or a port opened on the
 router with UPnP), punches through NATs when it can't, and falls back to
@@ -56,19 +47,8 @@ Download a share into the current folder, or the folder given with
 .BR \-o .
 Files are saved under a free name and are never overwritten.
 .TP
-.BI "msg " "contact\-or\-id message"
-Send a text message.
-If the other device can't be reached, the message is queued and delivered
-automatically by the background service.
-.TP
-.B inbox
-Show received messages, newest first, and mark them read.
-.TP
-.BI "reply " "number message"
-Reply to a message in the inbox.
-.TP
 .B setup
-Name this device and start the background service, which receives messages.
+Name this device.
 .TP
 .B id
 Print this device's ID, which others use to reach it.
@@ -78,11 +58,6 @@ Show or change this device's name.
 .TP
 .BR contact " {" add " \fIname id\fR | " list " | " remove " \fIname\fR}"
 Manage saved contacts.
-.TP
-.BR daemon " {" status | install | uninstall | run }
-Manage the background service.
-.B status
-exits with status 3 when the service is not running.
 .TP
 .BR relay " {" run " [" \-\-private "] [" \-\-port " \fIport\fR] | " use " \fIaddress\fR | " list " | " remove " \fIaddress\fR}"
 Run a relay for devices that can't connect directly, or configure relays to use.
@@ -110,7 +85,7 @@ Don't ask the router to open a port.
 .SH ENVIRONMENT
 .TP
 .B BEEMR_HOME
-Folder for the identity, contacts and inbox (default
+Folder for the identity and contacts (default
 .I ~/.config/beemr
 on Linux).
 .TP
@@ -124,16 +99,13 @@ This device's private key.
 .TP
 .I ~/.config/beemr/contacts
 Saved contacts.
-.TP
-.I ~/.config/beemr/inbox.jsonl
-Received messages.
 .SH EXAMPLES
 .nf
 beemr share photos/ \-n 3 \-e 2h
 beemr share contract.pdf \-\-to sara
 beemr get <ticket> \-o ~/Downloads
 beemr contact add Sara <device\-id>
-beemr msg sara "are you free tonight?"
+beemr share report.pdf \-\-to sara
 .fi
 .SH SEE ALSO
 https://github.com/osmanahmadxai/beemr

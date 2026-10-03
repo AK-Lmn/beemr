@@ -1,7 +1,7 @@
 # The beemr protocol, version 2
 
 This document specifies how beemr devices find each other, connect
-through NATs, authenticate, and exchange files and messages. It is complete
+through NATs, authenticate, and transfer files. It is complete
 enough to write an interoperable implementation without reading the
 reference code.
 
@@ -59,17 +59,17 @@ The device identity is bound to each connection by the `Hello` signature (§6).
 
 ## 4. Discovery records
 
-A device publishes where it can be reached as a BEP 44 **mutable item** on the
-Mainline DHT. The item is signed with the device key, so its public key *is*
-the device ID. The `seq` field is the current Unix time in microseconds.
+While sharing, a device publishes where it can be reached as a BEP 44
+**mutable item** on the Mainline DHT. The item is signed with the device key,
+so its public key *is* the device ID. The `seq` field is the current Unix time
+in microseconds. The salt is:
 
-| Record | Salt |
-|---|---|
-| Background service | `"beemr/device/1"` |
-| One share | `HMAC(share_secret, "beemr/share-record")[0..16]` |
+```
+salt = HMAC(share_secret, "beemr/share-record")[0..16]
+```
 
-Because a share's salt is derived from its secret, the share record can't be
-found without the ticket.
+Because the salt is derived from the share's secret, the record can't be found
+without the ticket.
 
 The value (at most 1000 bytes) is:
 
@@ -118,8 +118,7 @@ It then keeps the best connection:
 
 - A **direct** connection is always preferred. All relayed connections to
   that peer SHOULD then be closed, so streams don't pick a limited one.
-- For **messages**, any connection is acceptable, including a limited relay.
-- For **file transfers**, after about 12 s without a successful hole punch,
+- After about 16 s without a successful hole punch,
   the initiator uses a connection through a **full relay** (§5.3), if one
   exists.
 
@@ -137,7 +136,7 @@ carry transfers. beemr devices run a full relay server when they are
 publicly reachable. Their circuits carry Noise- or TLS-encrypted libp2p
 traffic, so relays can't read it.
 
-- Sharers and background services SHOULD hold reservations on two limited
+- Sharers SHOULD hold reservations on two limited
   relays (found via the IPFS DHT, preferring QUIC) and up to two full relays.
 - Full relays announce themselves with BEP 5 `announce_peer` under the
   infohash `SHA-256("beemr/relays/1")[0..20]`, on the port they listen on
@@ -168,8 +167,7 @@ message = type (u8) || body
 | 6 | Ack | empty |
 | 7 | Fail | reason (UTF-8, rest) |
 | 8 | Download | proof (32) |
-| 9 | Text | sent_at (u64, Unix seconds) · body (UTF-8, rest, at most 16 KiB) |
-| 10 | Delivered | empty |
+| 9, 10 | *reserved* | used by text messages before 0.3; MUST NOT be reused |
 
 Messages with trailing bytes or unknown types MUST be rejected.
 
@@ -222,20 +220,7 @@ The entry rules:
 - A file's `Data` messages total exactly `Entry.size`.
 - `End.total_bytes` MUST equal the sum of file sizes.
 
-### 6.3 Text messages
-
-```
-initiator → Hello
-responder → Hello
-initiator → Text { sent_at, body }
-responder → Delivered        or  Fail(reason)
-```
-
-The responder stores the message with the verified device ID and the claimed
-name. Initiators that can't deliver SHOULD queue the message and retry, giving
-up after 7 days.
-
-### 6.4 Closing
+### 6.3 Closing
 
 After its final message, a side SHOULD close its write half and wait briefly
 for the peer to close theirs before exiting. Otherwise the last message may be
@@ -269,11 +254,8 @@ lost in flight.
   not what. Full relays SHOULD rate-limit reservations and circuits.
 - **Denial of service.** Unidentified streams SHOULD time out after about
   20 s, and transfers after about 60 s of inactivity.
-- **Unsolicited messages.** Anyone who knows a device ID can message it.
-  Clients SHOULD clearly mark senders who aren't saved contacts.
 
 ## 9. Future work
 
 - Resumable transfers (an offset in `Entry`) and per-file hashes.
-- Sending files to a device ID directly, through its background service.
-- Encrypting stored messages at rest.
+- Sending files to a device ID directly, without a ticket.

@@ -108,13 +108,5 @@ echo "   took $(( $(date +%s) - START ))s"
 docker exec "$P-host-b" md5sum /tmp/dl/file.bin 2>/dev/null | awk '{print "   received md5: " $1}'
 set -e
 
-if [[ $STATUS == 0 ]]; then
-  echo "== messaging: host-b runs the background service, host-a sends a message"
-  docker exec -d "$P-host-b" sh -c "beemr daemon run 2> /tmp/daemon.log"
-  BOB=$(docker exec "$P-host-b" beemr id 2>/dev/null)
-  sleep 12
-  docker exec "$P-host-a" beemr msg "$BOB" "hello across two NATs" 2>&1 | sed 's/^/   /'
-  docker exec "$P-host-b" beemr inbox 2>/dev/null | sed 's/^/   /' | head -6
-fi
 echo "== done (mode=$MODE relay=$WITH_RELAY, download exit status $STATUS)"
 exit "$STATUS"

@@ -4,8 +4,7 @@
 #
 # Downloads the right binary for this machine from GitHub Releases, verifies
 # its SHA-256 checksum, installs it to ~/.local/bin, then runs `beemr setup`
-# (name this device and start the background service; BEEMR_NO_SERVICE=1
-# skips the service).
+# to name this device.
 set -eu
 
 REPO="${BEEMR_REPO:-osmanahmadxai/beemr}"
@@ -30,12 +29,7 @@ esac
 echo "This installer will:"
 echo "  - download beemr for $os ($arch) from GitHub and verify its checksum"
 echo "  - install it to $INSTALL_DIR and add that folder to your PATH if needed"
-if [ "${BEEMR_NO_SERVICE:-}" = "1" ]; then
-  echo "  - name this device (no background service: BEEMR_NO_SERVICE=1)"
-else
-  echo "  - name this device and start the background service that receives"
-  echo "    messages, set to start when you log in"
-fi
+echo "  - ask you to name this device (nothing runs in the background)"
 echo "Uninstall any time: curl -fsSL https://raw.githubusercontent.com/$REPO/main/uninstall.sh | sh"
 echo
 
@@ -76,12 +70,9 @@ case ":$PATH:" in
 esac
 
 echo
-# BEEMR_NO_SERVICE=1 skips the background service (servers, CI).
-setup_args=""
-[ "${BEEMR_NO_SERVICE:-}" = "1" ] && setup_args="--no-service"
 # Ask for the device name on the terminal even though this script is piped into sh.
 if [ -r /dev/tty ] && [ -w /dev/tty ] && (: < /dev/tty) 2>/dev/null; then
-  "$INSTALL_DIR/beemr" setup $setup_args < /dev/tty
+  "$INSTALL_DIR/beemr" setup < /dev/tty
 else
-  "$INSTALL_DIR/beemr" setup $setup_args
+  "$INSTALL_DIR/beemr" setup
 fi

@@ -5,8 +5,8 @@
 //! 2. Hole punching: connect through a relay, then DCUtR upgrades to direct.
 //! 3. Full relay: if hole punching fails, a beemr relay carries the data.
 //!
-//! Short messages may use any relay. File transfers need a direct
-//! connection or a full relay, since public relays only allow ~128 KiB.
+//! Transfers need a direct connection or a full relay, since public relays
+//! only allow ~128 KiB per connection.
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -29,14 +29,6 @@ const RESOLVE_RETRY: Duration = Duration::from_secs(3);
 const RERESOLVE_EVERY: Duration = Duration::from_secs(10);
 /// How long QUIC relay circuits get before TCP ones are tried too.
 const TCP_CIRCUIT_DELAY: Duration = Duration::from_secs(3);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Purpose {
-    /// Any connection will do (a small text message).
-    Message,
-    /// Needs a direct connection or a full relay (file transfer).
-    Files,
-}
 
 /// How a connection was made, for the user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,13 +63,8 @@ pub struct Route {
 }
 
 /// Connect to a target, returning the peer to open streams to. On success,
-/// only connections suitable for `purpose` remain open to that peer.
-pub async fn connect(
-    node: &Node,
-    target: Target,
-    purpose: Purpose,
-    timeout: Duration,
-) -> Result<Route> {
+/// only connections that can carry a transfer remain open to that peer.
+pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<Route> {
     let mut target = target;
     if force_relay() {
         // Diagnostics: ignore direct addresses so the relay and hole-punching
@@ -86,7 +73,6 @@ pub async fn connect(
     }
     let mut ladder = Ladder {
         node,
-        purpose,
         events: node.events(),
         lan_dials: HashSet::new(),
         lan_peers: Vec::new(),
@@ -193,7 +179,6 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
 
 struct Ladder<'a> {
     node: &'a Node,
-    purpose: Purpose,
     events: broadcast::Receiver<NodeEvent>,
     lan_dials: HashSet<ConnectionId>,
     /// Peers reached through ticket LAN addresses (identity checked later).
@@ -230,7 +215,7 @@ impl Ladder<'_> {
                 self.full_relay_dials.remove(&conn);
                 if relay.is_some() && self.candidates().contains(&peer) {
                     self.seen_relayed = true;
-                    if self.purpose == Purpose::Files && self.hole_punch_deadline.is_none() {
+                    if self.hole_punch_deadline.is_none() {
                         self.hole_punch_deadline = Some(Instant::now() + HOLE_PUNCH_GRACE);
                     }
                 }
@@ -343,12 +328,6 @@ impl Ladder<'_> {
                 };
                 return Ok(Some(Route { peer, path }));
             }
-            if self.purpose == Purpose::Message {
-                return Ok(Some(Route {
-                    peer,
-                    path: Path::Relayed,
-                }));
-            }
             if self.hole_punch_failed {
                 let full: Vec<ConnectionId> = conns
                     .iter()
@@ -397,7 +376,7 @@ impl Ladder<'_> {
     }
 
     fn diagnose(&self) -> Error {
-        if self.seen_relayed && self.purpose == Purpose::Files {
+        if self.seen_relayed {
             return no_route_error();
         }
         if self.expected.is_none() && self.lan_peers.is_empty() {

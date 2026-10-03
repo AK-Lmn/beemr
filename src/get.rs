@@ -7,7 +7,7 @@ use std::time::Duration;
 use libp2p::Stream;
 use tokio::io::AsyncWriteExt;
 
-use crate::connect::{self, Purpose, Target};
+use crate::connect::{self, Target};
 use crate::discovery::Dht;
 use crate::node::{self, Mode, Node, NodeOptions};
 use crate::profile::Profile;
@@ -52,7 +52,7 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
             .collect(),
         record: dht.map(|dht| (dht, ticket.device, ticket.record_salt())),
     };
-    let route = connect::connect(&node, target, Purpose::Files, CONNECT_TIMEOUT).await?;
+    let route = connect::connect(&node, target, CONNECT_TIMEOUT).await?;
     let stream = node
         .control()
         .open_stream(route.peer, proto::PROTOCOL)

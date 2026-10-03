@@ -6,8 +6,7 @@
 #
 # Devices are isolated from public networks and find each other through a
 # private Mainline DHT started by this script. Set SMOKE_PUBLIC=1 to also run
-# `beemr doctor` against the real internet, and SMOKE_SERVICE=1 to install
-# and remove the background service with the OS service manager.
+# `beemr doctor` against the real internet.
 set -uo pipefail
 
 BIN="${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/beemr}"
@@ -95,7 +94,7 @@ sleep 1; pass "two DHT nodes started on ports $DHT_PORT_A, $DHT_PORT_B"
 
 section "Basics: help, version, errors"
 expect "beemr (no arguments) prints usage" "Usage|Files:" "$BIN"
-expect "beemr help lists every command" "msg <contact-or-id>.*" "$BIN" help
+expect "beemr help lists every command" "contact add <name>.*" "$BIN" help
 expect "beemr --help" "beemr share" "$BIN" --help
 expect "beemr --version" "^beemr [0-9]+\.[0-9]+\.[0-9]+" "$BIN" --version
 expect_fail "unknown command is rejected helpfully" "unknown command 'frobnicate'" "$BIN" frobnicate
@@ -180,49 +179,6 @@ expect_fail "get -o rejects a missing folder" "not a folder" bp sara get "$TICKE
 expect_fail "share rejects a missing file" "No such file|not found|cannot find" bp alice share "$W/nope.txt"
 expect_fail "share rejects unknown options" "unknown option --bogus" bp alice share "$W/alice/files/report.pdf" --bogus
 
-section "Messages: msg, inbox, reply, queue"
-expect "inbox is empty at first" "empty" bp sara inbox
-expect_fail "daemon status (not running, exit code 3)" "not running" bp sara daemon status
-bp sara daemon run 2> "$W/sara/daemon.log" & SARA_DAEMON=$!; PIDS+=("$SARA_DAEMON")
-eventually 20 bp sara daemon status && expect "daemon status (running)" "is running" bp sara daemon status
-expect_fail "a second background service refuses to start" "already running" bp sara daemon run
-if eventually 90 bash -c "BEEMR_HOME='$W/alice/config' BEEMR_ISOLATED=1 BEEMR_DHT_BOOTSTRAP='$BOOT' '$BIN' msg sara 'are you free tonight?' 2>&1 | grep -q Delivered"; then
-  pass "beemr msg sara \"are you free tonight?\" → Delivered"
-else
-  fail "msg was never delivered" "$(tail -5 "$W/sara/daemon.log")"
-fi
-expect "Sara's inbox shows the message from Alice by contact name" "Alice · .*" bp sara inbox
-expect "the message text is shown" "are you free tonight\?" bp sara inbox
-expect "messages are marked read after viewing" "0 new" bp sara inbox
-expect "inbox --all" "are you free tonight\?" bp sara inbox --all
-expect "Eve messages Sara (unknown sender)" "Delivered" bp eve msg "$SARA" "hi, I'm Eve"
-expect "unknown senders are marked as not in contacts" "\"Eve\" \(not in contacts" bp sara inbox
-expect "inbox suggests saving unknown senders" "contact add <name> $EVE" bp sara inbox
-
-bp alice daemon run 2> "$W/alice/daemon.log" & ALICE_DAEMON=$!; PIDS+=("$ALICE_DAEMON")
-sleep 5
-if eventually 90 bash -c "BEEMR_HOME='$W/sara/config' BEEMR_ISOLATED=1 BEEMR_DHT_BOOTSTRAP='$BOOT' '$BIN' reply 2 'yes, 8pm' 2>&1 | grep -q Delivered"; then
-  pass "beemr reply 2 \"yes, 8pm\" (to Alice) → Delivered"
-else
-  fail "reply was never delivered"
-fi
-expect "Alice's inbox shows Sara's reply" "yes, 8pm" bp alice inbox
-expect_fail "reply to a non-existent message number fails" "no message number 99" bp sara reply 99 "hello"
-expect_fail "msg to an unknown contact fails helpfully" "neither a saved contact nor a device ID" bp alice msg bob "hi"
-expect_fail "empty messages are rejected" "empty" bp alice msg sara "   "
-
-stop "$SARA_DAEMON"; wait_exit "$SARA_DAEMON" 10
-eventually 10 bash -c "! BEEMR_HOME='$W/sara/config' '$BIN' daemon status" \
-  && pass "Sara's background service stopped" || fail "Sara's service is still running"
-TIMEOUT=90 expect "msg to an offline device is queued" "Queued" bp alice msg sara "message while you were away"
-expect "daemon status shows the queued message" "1 message\(s\) waiting" bp alice daemon status
-bp sara daemon run 2> "$W/sara/daemon2.log" & PIDS+=($!)
-if eventually 180 bash -c "BEEMR_HOME='$W/sara/config' '$BIN' inbox 2>/dev/null | grep -q 'message while you were away'"; then
-  pass "the queued message is delivered automatically when Sara comes online"
-else
-  fail "queued message never arrived" "$(tail -5 "$W/alice/daemon.log")"
-fi
-
 section "Relays"
 RELAY_PORT=$((35000 + RANDOM % 4000))
 bp relay relay run --private --port "$RELAY_PORT" 2> "$W/relay/relay.log" & PIDS+=($!)
@@ -236,15 +192,8 @@ expect_fail "relay use rejects an address without /p2p/<id>" "must end in /p2p" 
 expect "beemr relay remove <address>" "Removed" bp alice relay remove "$RELAY_ADDR"
 expect "relay list is empty again" "No saved relays" bp alice relay list
 
-if [[ "${SMOKE_SERVICE:-}" == 1 ]]; then
-  section "Background service (OS service manager)"
-  expect "beemr daemon install" "Background service running" env BEEMR_HOME="$W/svc/config" "$BIN" daemon install
-  eventually 20 env BEEMR_HOME="$W/svc/config" "$BIN" daemon status
-  expect "the service is running after install" "is running" env BEEMR_HOME="$W/svc/config" "$BIN" daemon status
-  expect "beemr daemon uninstall" "stopped and removed" env BEEMR_HOME="$W/svc/config" "$BIN" daemon uninstall
-  sleep 2
-  expect_fail "the service is stopped after uninstall" "not running" env BEEMR_HOME="$W/svc/config" "$BIN" daemon status
-fi
+section "Legacy background service cleanup"
+expect "beemr daemon (from older versions) cleans up and explains" "no longer runs a background service" bp alice daemon run
 
 if [[ "${SMOKE_PUBLIC:-}" == 1 ]]; then
   section "Public internet"
