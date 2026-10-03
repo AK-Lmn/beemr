@@ -37,7 +37,10 @@ pub struct ShareOptions {
     pub max_downloads: Option<u32>,
     pub expires_in: Option<Duration>,
     pub port: u16,
+    /// Ask the router to open a port (UPnP, PCP, NAT-PMP).
     pub upnp: bool,
+    /// Relay for other beemr devices while sharing, when reachable.
+    pub relay_for_others: bool,
 }
 
 /// Why sharing stopped.
@@ -57,6 +60,7 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
         public_network: network.public,
         upnp: network.public && options.upnp,
         relays: profile.config.relays()?,
+        relay_for_others: options.relay_for_others,
         key_seed: None,
     })
     .await?;
@@ -107,24 +111,46 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
             !network.public,
         ));
         tokio::spawn(find_full_relays(node.clone(), dht.clone()));
+        if options.relay_for_others {
+            tokio::spawn(announce_relay_when_reachable(
+                node.clone(),
+                dht.clone(),
+                network.public,
+            ));
+        }
     }
 
-    let mut incoming = node
+    let accept = share.accept_on(node.clone())?;
+    let mut punch_requests = node
         .control()
-        .accept(proto::PROTOCOL)
+        .accept(crate::punch::PROTOCOL)
         .map_err(|e| Error::new(e.to_string()))?;
-    let accept = {
-        let share = Arc::clone(&share);
+    {
+        // Receivers that can't reach us directly may ask for port prediction.
+        let (share, node) = (Arc::clone(&share), node.clone());
         tokio::spawn(async move {
-            while let Some((peer, stream)) = incoming.next().await {
-                let share = Arc::clone(&share);
-                tokio::spawn(async move { share.handle(peer, stream).await });
+            while let Some((peer, stream)) = punch_requests.next().await {
+                let (share, node) = (Arc::clone(&share), node.clone());
+                tokio::spawn(async move {
+                    match crate::punch::respond(&node, peer, stream).await {
+                        // We were the strict side: serve over the new endpoint.
+                        Ok(Some(endpoint)) => {
+                            let _ = share.accept_on(endpoint);
+                        }
+                        Ok(None) => {}
+                        Err(e) => tracing::debug!(error = %e, "port prediction"),
+                    }
+                });
             }
-        })
-    };
+        });
+    }
 
     eprintln!("Waiting for the other device… (Ctrl+C to stop sharing)\n");
-    tokio::spawn(report_reachability(node.status(), network.public));
+    tokio::spawn(report_reachability(
+        node.status(),
+        network.public,
+        options.relay_for_others,
+    ));
     let outcome = tokio::select! {
         outcome = share.wait_until_finished() => outcome,
         _ = tokio::signal::ctrl_c() => {
@@ -176,10 +202,15 @@ fn print_policy(share: &Share, expires_in: Option<Duration>) {
 }
 
 /// Print a line each time this device becomes reachable in a new way.
-pub async fn report_reachability(mut status: tokio::sync::watch::Receiver<Status>, public: bool) {
+pub async fn report_reachability(
+    mut status: tokio::sync::watch::Receiver<Status>,
+    public: bool,
+    relay_for_others: bool,
+) {
     let started = Instant::now();
     let (mut lan, mut direct, mut punch, mut full, mut warned, mut upnp_reported) =
         (false, false, false, false, false, false);
+    let mut relaying = false;
     loop {
         {
             let s = status.borrow_and_update().clone();
@@ -199,6 +230,12 @@ pub async fn report_reachability(mut status: tokio::sync::watch::Receiver<Status
                     ),
                     None => eprintln!("  ✓ Reachable from the internet: this device is directly reachable"),
                 }
+            }
+            if relay_for_others && !relaying && s.directly_reachable() {
+                relaying = true;
+                eprintln!(
+                    "  ✓ Relaying for other beemr users while sharing (encrypted; turn off with --no-relay)"
+                );
             }
             if !punch && s.relayed.iter().any(|r| !r.full) {
                 punch = true;
@@ -233,6 +270,36 @@ pub async fn report_reachability(mut status: tokio::sync::watch::Receiver<Status
             _ = tokio::time::sleep(Duration::from_secs(5)) => {}
         }
     }
+}
+
+/// While this sharer is reachable from the internet, announce it as a relay
+/// on the DHT so devices that can't connect directly can use it.
+async fn announce_relay_when_reachable(node: Node, dht: Dht, public: bool) {
+    loop {
+        let port = {
+            let status = node.status();
+            let status = status.borrow();
+            status
+                .external
+                .iter()
+                .filter(|a| node::ip_of(a).is_some_and(|ip| node::is_global(&ip) || !public))
+                .find_map(port_of)
+        };
+        let wait = match port {
+            Some(port) if dht.announce_relay(port).await.is_ok() => Duration::from_secs(20 * 60),
+            _ => Duration::from_secs(30),
+        };
+        tokio::time::sleep(wait).await;
+    }
+}
+
+fn port_of(addr: &Multiaddr) -> Option<u16> {
+    addr.iter().find_map(|p| match p {
+        libp2p::multiaddr::Protocol::Udp(port) | libp2p::multiaddr::Protocol::Tcp(port) => {
+            Some(port)
+        }
+        _ => None,
+    })
 }
 
 /// The addresses to publish, most useful first. Loopback addresses are only
@@ -531,8 +598,8 @@ impl Share {
 
     /// How `peer` is connected to us, including how our router opened a
     /// port when the connection came in over a mapped port.
-    fn path_to(&self, peer: &PeerId) -> Option<PathKind> {
-        match self.node.path_to(peer)? {
+    fn path_to(&self, node: &Node, peer: &PeerId) -> Option<PathKind> {
+        match node.path_to(peer)? {
             PathKind::Internet { mapped: None } => Some(PathKind::Internet {
                 mapped: self.node.status().borrow().mapping_method(),
             }),
@@ -540,7 +607,23 @@ impl Share {
         }
     }
 
-    async fn handle(self: Arc<Self>, peer: PeerId, stream: Stream) {
+    /// Serve beemr streams arriving on `node` (the main node, or a second
+    /// endpoint created by port prediction).
+    fn accept_on(self: &Arc<Self>, node: Node) -> Result<tokio::task::JoinHandle<()>> {
+        let mut incoming = node
+            .control()
+            .accept(proto::PROTOCOL)
+            .map_err(|e| Error::new(e.to_string()))?;
+        let share = Arc::clone(self);
+        Ok(tokio::spawn(async move {
+            while let Some((peer, stream)) = incoming.next().await {
+                let (share, node) = (Arc::clone(&share), node.clone());
+                tokio::spawn(async move { share.handle(&node, peer, stream).await });
+            }
+        }))
+    }
+
+    async fn handle(self: Arc<Self>, node: &Node, peer: PeerId, stream: Stream) {
         let mut framed = Framed::new(stream);
         let profile = &self.profile;
 
@@ -599,7 +682,7 @@ impl Share {
         };
 
         eprintln!("  → Sending to {who}");
-        if let Some(path) = self.path_to(&peer) {
+        if let Some(path) = self.path_to(node, &peer) {
             eprintln!("    How: {path}");
         }
         match send_content(&mut framed, &self.content).await {

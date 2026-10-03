@@ -38,9 +38,21 @@ pub struct Target {
     pub record: Option<(Dht, DeviceId, Vec<u8>)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct Route {
     pub peer: PeerId,
+    /// A second endpoint holding the connection, when port prediction made
+    /// it (open streams on this instead of the main node).
+    pub endpoint: Option<Node>,
+}
+
+impl Route {
+    fn on(peer: PeerId) -> Route {
+        Route {
+            peer,
+            endpoint: None,
+        }
+    }
 }
 
 /// Connect to a target, returning the peer to open streams to. On success,
@@ -65,6 +77,7 @@ pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<R
         seen_relayed: false,
         hole_punch_deadline: None,
         hole_punch_failed: false,
+        punch_attempted: false,
         record_found: false,
         errors: Vec::new(),
     };
@@ -186,6 +199,8 @@ struct Ladder<'a> {
     seen_relayed: bool,
     hole_punch_deadline: Option<Instant>,
     hole_punch_failed: bool,
+    /// Port prediction has been tried (it runs at most once).
+    punch_attempted: bool,
     record_found: bool,
     errors: Vec<String>,
 }
@@ -314,7 +329,24 @@ impl Ladder<'_> {
                 .collect();
             if !direct.is_empty() {
                 self.keep_only(&peer, &direct).await;
-                return Ok(Some(Route { peer }));
+                return Ok(Some(Route::on(peer)));
+            }
+            if self.hole_punch_failed && !self.punch_attempted {
+                // One side may be behind a strict NAT: try port prediction
+                // before settling for a relay.
+                self.punch_attempted = true;
+                match crate::punch::initiate(self.node, peer).await {
+                    Ok(Some(endpoint)) => {
+                        return Ok(Some(Route {
+                            peer,
+                            endpoint: Some(endpoint),
+                        }));
+                    }
+                    // We sprayed: the direct connection arrives on our node and
+                    // the next evaluation picks it up.
+                    Ok(None) => return Ok(None),
+                    Err(e) => tracing::debug!(error = %e, "port prediction"),
+                }
             }
             if self.hole_punch_failed {
                 let full: Vec<ConnectionId> = conns
@@ -324,7 +356,7 @@ impl Ladder<'_> {
                     .collect();
                 if !full.is_empty() {
                     self.keep_only(&peer, &full).await;
-                    return Ok(Some(Route { peer }));
+                    return Ok(Some(Route::on(peer)));
                 }
                 if self.full_relay_dials.is_empty() {
                     return Err(no_route_error());

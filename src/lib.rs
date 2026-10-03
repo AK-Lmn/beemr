@@ -31,6 +31,7 @@ mod portmap;
 pub mod profile;
 mod progress;
 pub mod proto;
+pub mod punch;
 pub mod relay;
 pub mod service;
 pub mod share;

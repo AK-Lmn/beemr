@@ -22,6 +22,7 @@ pub async fn run(profile: Profile) -> Result<()> {
         public_network: network.public,
         upnp: network.public,
         relays: profile.config.relays()?,
+        relay_for_others: false,
         key_seed: None,
     })
     .await?;

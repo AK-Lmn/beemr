@@ -23,6 +23,7 @@ pub async fn run(profile: Profile, port: u16, public_listing: bool) -> Result<()
         public_network: network.public,
         upnp: network.public,
         relays: Vec::new(),
+        relay_for_others: false,
         key_seed: Some(profile.identity.derive_seed("relay-key")),
     })
     .await?;

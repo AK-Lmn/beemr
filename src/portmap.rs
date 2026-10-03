@@ -22,8 +22,9 @@ const LIFETIME_SECS: u32 = 600;
 const NATPMP_PORT: u16 = 5351;
 
 /// Map `port` for QUIC (UDP) and TCP, and keep the mapping alive. Runs until
-/// the process exits.
-pub async fn run(node: Node, port: u16) {
+/// the process exits. `public` is false in isolated test networks, where the
+/// router's private "external" address is accepted.
+pub async fn run(node: Node, port: u16, public: bool) {
     let Some(port) = NonZeroU16::new(port) else {
         return;
     };
@@ -64,7 +65,7 @@ pub async fn run(node: Node, port: u16) {
         ),
     };
     match external_ip {
-        Some(ip) if node::is_global(&ip) => {
+        Some(ip) if node::is_global(&ip) || !public => {
             for mapping in &mappings {
                 node.add_external(external_addr(ip, mapping));
             }

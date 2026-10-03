@@ -38,6 +38,7 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
         public_network: network.public,
         upnp: network.public,
         relays: Vec::new(),
+        relay_for_others: false,
         key_seed: None,
     })
     .await?;
@@ -53,6 +54,8 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
         record: dht.map(|dht| (dht, ticket.device, ticket.record_salt())),
     };
     let route = connect::connect(&node, target, CONNECT_TIMEOUT).await?;
+    // Port prediction may have connected through a second endpoint.
+    let node = route.endpoint.clone().unwrap_or(node);
     let stream = node
         .control()
         .open_stream(route.peer, proto::PROTOCOL)

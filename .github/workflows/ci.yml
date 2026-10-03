@@ -51,22 +51,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Hole punching races packets through two NATs and isn't guaranteed
-          # (libp2p measures ~70% in the wild), so this scenario requires the
-          # transfer to succeed and reports which path it took.
+          # Hole punching and port prediction race packets through NATs and
+          # aren't guaranteed, so those scenarios require the transfer to
+          # succeed and report which path it took.
           - scenario: cone NAT, hole punching
             args: cone
             expect: success
             path: ""
-            report: "via direct connection (through the firewall via hole punching)"
-          - scenario: symmetric NAT, relay fallback
+            report: "punched through both firewalls"
+          - scenario: cone + symmetric NAT, port prediction
+            args: mixed
+            expect: success
+            path: ""
+            report: "port prediction"
+          - scenario: symmetric NAT, dedicated relay
             args: symmetric
             expect: success
-            path: "via relayed connection"
+            path: "How: relayed through beemr relay"
+            report: ""
+          - scenario: symmetric NAT, another user's beemr relays
+            args: peerrelay
+            expect: success
+            path: "How: relayed through beemr relay 172.30.0.7"
+            report: ""
           - scenario: no relay available
             args: symmetric --no-relay
             expect: failure
             path: ""
+            report: ""
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -89,9 +101,9 @@ jobs:
             fi
             if [[ -n "${{ matrix.report }}" ]]; then
               if grep -qF "${{ matrix.report }}" lab.log; then
-                echo "::notice::hole punching succeeded: devices connected directly through both NATs"
+                echo "::notice::direct connection made (${{ matrix.report }})"
               else
-                echo "::warning::hole punching did not succeed this run; the relay carried the transfer"
+                echo "::warning::'${{ matrix.report }}' did not succeed this run; a relay carried the transfer"
               fi
             fi
             grep -q "sent md5" lab.log && [[ "$(grep -o 'sent md5: *[0-9a-f]*' lab.log | awk '{print $3}')" == "$(grep -o 'received md5: *[0-9a-f]*' lab.log | awk '{print $3}')" ]] \

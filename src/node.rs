@@ -82,6 +82,9 @@ pub struct NodeOptions {
     pub upnp: bool,
     /// Relays to reserve on in addition to any discovered ones.
     pub relays: Vec<Multiaddr>,
+    /// Relay (end-to-end encrypted) traffic for other beemr devices when this
+    /// device turns out to be reachable from the internet. Share mode only.
+    pub relay_for_others: bool,
     /// A fixed network identity (32-byte Ed25519 seed). Relays use one so
     /// their address stays valid across restarts; others use a fresh one.
     pub key_seed: Option<[u8; 32]>,
@@ -213,6 +216,7 @@ pub struct Node {
     peer_id: PeerId,
     key_seed: [u8; 32],
     port: u16,
+    public: bool,
     control: libp2p_stream::Control,
     commands: mpsc::UnboundedSender<Command>,
     status: watch::Receiver<Status>,
@@ -243,6 +247,7 @@ impl Node {
         let peer_id = keypair.public().to_peer_id();
         let public = options.public_network;
         let use_upnp = options.upnp;
+        let relay_for_others = options.relay_for_others;
         let mode = options.mode;
 
         let mut swarm = SwarmBuilder::with_existing_identity(keypair)
@@ -259,10 +264,16 @@ impl Node {
                 let local = key.public().to_peer_id();
                 Behaviour {
                     relay_client,
-                    relay_server: mode
-                        .serves_relay()
-                        .then(|| relay::Behaviour::new(local, relay_server_config()))
-                        .into(),
+                    // libp2p only offers relaying once an external address is
+                    // confirmed, so a sharer relays only when it's reachable.
+                    relay_server: match mode {
+                        Mode::Relay => Some(relay::Behaviour::new(local, relay_server_config())),
+                        Mode::Share if relay_for_others => {
+                            Some(relay::Behaviour::new(local, peer_relay_config()))
+                        }
+                        _ => None,
+                    }
+                    .into(),
                     identify: identify::Behaviour::new(
                         identify::Config::new("ipfs/0.1.0".into(), key.public())
                             .with_agent_version(AGENT.into()),
@@ -356,6 +367,7 @@ impl Node {
             peer_id,
             key_seed,
             port,
+            public,
             control,
             commands,
             status,
@@ -363,7 +375,7 @@ impl Node {
             shared,
         };
         if use_upnp {
-            tokio::spawn(crate::portmap::run(node.clone(), port));
+            tokio::spawn(crate::portmap::run(node.clone(), port, public));
         }
         // Wait until the listeners report their concrete addresses.
         let mut status = node.status();
@@ -393,6 +405,11 @@ impl Node {
         let _ = self.commands.send(Command::SetPortMap(state));
     }
 
+    /// Our external QUIC address as some peer saw it, if any.
+    pub fn observed_quic(&self) -> Option<SocketAddr> {
+        self.shared().observed.values().next().copied()
+    }
+
     /// Record that a peer was reached by hole punching or port prediction.
     pub fn mark_punched(&self, peer: PeerId, how: PathKind) {
         self.shared().punched.insert(peer, how);
@@ -417,8 +434,9 @@ impl Node {
                 _ => PathKind::Internet { mapped: None },
             });
         }
+        // Test networks use private addresses for their "internet".
         conns.first().map(|c| PathKind::Relay {
-            addr: ip_of(&c.addr).filter(is_global),
+            addr: ip_of(&c.addr).filter(|ip| is_global(ip) || !self.public),
         })
     }
 
@@ -493,6 +511,21 @@ impl Node {
         ips.sort();
         ips.dedup();
         ips
+    }
+}
+
+/// Limits for a sharer relaying for others: modest, since it's someone's
+/// own computer, but enough for real transfers (a "full" relay).
+fn peer_relay_config() -> relay::Config {
+    relay::Config {
+        max_reservations: 32,
+        max_reservations_per_peer: 2,
+        reservation_duration: Duration::from_secs(60 * 60),
+        max_circuits: 8,
+        max_circuits_per_peer: 2,
+        max_circuit_duration: Duration::from_secs(2 * 60 * 60),
+        max_circuit_bytes: 8 * 1024 * 1024 * 1024,
+        ..relay::Config::default()
     }
 }
 
@@ -605,11 +638,12 @@ pub fn relay_transport_ok(addr: &Multiaddr) -> bool {
 }
 
 /// A public IPv4 QUIC address as reported by a peer (`/ip4/…/udp/…/quic-v1`).
-fn observed_quic_v4(addr: &Multiaddr) -> Option<SocketAddr> {
+/// Private addresses count too in isolated test networks.
+fn observed_quic_v4(addr: &Multiaddr, allow_private: bool) -> Option<SocketAddr> {
     let mut iter = addr.iter();
     match (iter.next(), iter.next(), iter.next()) {
         (Some(Protocol::Ip4(ip)), Some(Protocol::Udp(port)), Some(Protocol::QuicV1))
-            if is_global(&IpAddr::V4(ip)) =>
+            if allow_private || is_global(&IpAddr::V4(ip)) =>
         {
             Some(SocketAddr::new(IpAddr::V4(ip), port))
         }
@@ -870,7 +904,12 @@ impl Driver {
                     // right away (libp2p only offers relaying once an external
                     // address is confirmed). In isolated test networks every
                     // non-loopback address counts.
-                    if self.mode == Mode::Relay
+                    // BEEMR_ASSUME_REACHABLE=1 does the same for a sharer, for
+                    // test networks that have no AutoNAT servers to confirm it.
+                    let assume_reachable = self.mode == Mode::Relay
+                        || (!self.public
+                            && std::env::var("BEEMR_ASSUME_REACHABLE").is_ok_and(|v| v == "1"));
+                    if assume_reachable
                         && ip_of(&address)
                             .is_some_and(|ip| is_global(&ip) || (!self.public && !ip.is_loopback()))
                     {
@@ -978,7 +1017,7 @@ impl Driver {
     fn on_behaviour_event(&mut self, event: BehaviourEvent) {
         match event {
             BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. }) => {
-                if let Some(seen) = observed_quic_v4(&info.observed_addr) {
+                if let Some(seen) = observed_quic_v4(&info.observed_addr, !self.public) {
                     self.shared().observed.insert(peer_id, seen);
                     self.publish_status();
                 }
@@ -1121,6 +1160,7 @@ mod tests {
             public_network: false,
             upnp: false,
             relays: vec![],
+            relay_for_others: false,
             key_seed: None,
         };
         let server = Node::start(options(Mode::Share)).await.unwrap();

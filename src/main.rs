@@ -13,7 +13,7 @@ use beemr::share::ShareOptions;
 use beemr::{doctor, relay, service, util, Error, Result};
 
 const USAGE: &str = "\
-beemr: send files and folders straight to another device.
+beemr: send files and  folders straight to another device.
 No servers, no accounts, no setup. Everything is end-to-end encrypted.
 
 Files:
@@ -34,7 +34,8 @@ Share options:
   -n, --downloads <n>     How many downloads to allow (default 1, 0 = unlimited)
   -e, --expires <time>    Stop accepting downloads after e.g. 30s, 10m, 2h or 1d
   -p, --port <port>       Listen on this port (default: random)
-  --no-upnp               Don't ask the router to open a port
+  --no-port-mapping       Don't ask the router to open a port (UPnP, PCP, NAT-PMP)
+  --no-relay              Don't relay for other beemr users while sharing
 ";
 
 #[tokio::main]
@@ -126,6 +127,7 @@ async fn share(args: &[String]) -> Result<()> {
         expires_in: None,
         port: 0,
         upnp: true,
+        relay_for_others: true,
     };
     let mut path = None;
     let mut args = args.iter();
@@ -149,7 +151,8 @@ async fn share(args: &[String]) -> Result<()> {
                 })?);
             }
             "-p" | "--port" => options.port = parse_port(value(&mut args, arg)?)?,
-            "--no-upnp" => options.upnp = false,
+            "--no-port-mapping" | "--no-upnp" => options.upnp = false,
+            "--no-relay" => options.relay_for_others = false,
             flag if flag.starts_with('-') && flag.len() > 1 => {
                 return Err(Error::new(format!("unknown option {flag}")))
             }
