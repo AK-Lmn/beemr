@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  docs:
+    name: Docs smoke test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: tests/docs-smoke.sh target/release/beemr
+
+  natlab:
+    name: NAT lab (${{ matrix.scenario }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Hole punching races packets through two NATs and isn't guaranteed
+          # (libp2p measures ~70% in the wild), so this scenario requires the
+          # transfer to succeed and reports which path it took.
+          - scenario: cone NAT, hole punching
+            args: cone
+            expect: success
+            path: ""
+            report: "via direct connection (through the firewall via hole punching)"
+          - scenario: symmetric NAT, relay fallback
+            args: symmetric
+            expect: success
+            path: "via relayed connection"
+          - scenario: no relay available
+            args: symmetric --no-relay
+            expect: failure
+            path: ""
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Run scenario
+        shell: bash
+        run: |
+          set +e
+          tests/natlab/run.sh ${{ matrix.args }} 2>&1 | tee lab.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ "${{ matrix.expect }}" == success ]]; then
+            [[ $status == 0 ]] || { echo "::error::transfer failed"; exit 1; }
+            if [[ -n "${{ matrix.path }}" ]]; then
+              grep -qF "${{ matrix.path }}" lab.log || { echo "::error::expected path: ${{ matrix.path }}"; exit 1; }
+            fi
+            if [[ -n "${{ matrix.report }}" ]]; then
+              if grep -qF "${{ matrix.report }}" lab.log; then
+                echo "::notice::hole punching succeeded: devices connected directly through both NATs"
+              else
+                echo "::warning::hole punching did not succeed this run; the relay carried the transfer"
+              fi
+            fi
+            grep -q "sent md5" lab.log && [[ "$(grep -o 'sent md5: *[0-9a-f]*' lab.log | awk '{print $3}')" == "$(grep -o 'received md5: *[0-9a-f]*' lab.log | awk '{print $3}')" ]] \
+              || { echo "::error::file corrupted"; exit 1; }
+            grep -q "hello across two NATs" lab.log || { echo "::error::message not delivered"; exit 1; }
+          else
+            [[ $status != 0 ]] || { echo "::error::expected the transfer to fail"; exit 1; }
+            grep -qE "relay|couldn't connect" lab.log || { echo "::error::expected a helpful error"; exit 1; }
+          fi
