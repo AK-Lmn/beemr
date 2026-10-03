@@ -17,9 +17,14 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#usage">Usage</a> ·
+  <a href="#how-beemr-compares">Compare</a> ·
   <a href="#how-it-connects">How it connects</a> ·
   <a href="#faq">FAQ</a> ·
   <a href="PROTOCOL.md">Protocol</a>
+</p>
+
+<p align="center">
+  <img src="docs/demo.gif" alt="beemr sharing a folder from one device and downloading it on another" width="900">
 </p>
 
 ---
@@ -66,6 +71,22 @@ That's it. The files go straight from one device to the other.
 | 🪪 **Share with one device only** | Every device has a cryptographic ID. `--to sara` means only Sara's device can download. |
 | ⏱️ **Limits built in** | One download by default. Allow more with `-n 5`, or expire with `-e 10m`. |
 | 🪶 **Small and quiet** | One ~9 MB native binary for macOS, Linux and Windows. Nothing runs in the background. |
+
+## How beemr compares
+
+| | **beemr** | croc | magic-wormhole | LocalSend |
+|---|---|---|---|---|
+| Works across the internet | ✅ | ✅ | ✅ | ❌ same network only |
+| Servers run by the project | **none** | public relay by default | rendezvous and relay servers | none |
+| Direct connections through NATs (hole punching) | ✅ | ❌ internet transfers go through the relay | ✅ when possible, else relay | — |
+| Share with one specific device only | ✅ `--to` | ❌ | ❌ | ❌ |
+| Download limits and expiry | ✅ | ❌ | one-time code | ❌ |
+| Interface | command line | command line | command line | graphical app |
+
+All four are good tools. Choose beemr when you want transfers that go straight
+between devices over the internet, with no service in between and control over
+who can download. LocalSend is great on a single network, and croc or
+magic-wormhole when you're fine with a relay server. Corrections are welcome.
 
 ## Install
 

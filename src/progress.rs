@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use crate::util::format_bytes;
 
 const REDRAW_EVERY: Duration = Duration::from_millis(100);
-const BAR_WIDTH: usize = 24;
+// Keeps the whole line within 80 columns.
+const BAR_WIDTH: usize = 20;
 
 pub struct Progress {
     label: &'static str,
@@ -53,7 +54,8 @@ impl Progress {
         let filled = (fraction * BAR_WIDTH as f64) as usize;
         let rate = self.done as f64 / self.started.elapsed().as_secs_f64().max(0.001);
         eprint!(
-            "\r  {} [{}{}] {:5.1}%  {} / {}  {}/s   ",
+            // \x1b[K clears the rest of the line instead of padding with spaces.
+            "\r  {} [{}{}] {:5.1}%  {} / {}  {}/s\x1b[K",
             self.label,
             "=".repeat(filled),
             " ".repeat(BAR_WIDTH - filled),

@@ -92,7 +92,6 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
     println!("    beemr get {}", ticket.encode());
     eprintln!();
 
-    tokio::spawn(report_reachability(node.status(), network.public));
     if let Some(dht) = &dht {
         let name = share.profile.name.clone();
         let identity = share.profile.identity.clone();
@@ -123,6 +122,7 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
     };
 
     eprintln!("Waiting for the other device… (Ctrl+C to stop sharing)\n");
+    tokio::spawn(report_reachability(node.status(), network.public));
     let outcome = tokio::select! {
         outcome = share.wait_until_finished() => outcome,
         _ = tokio::signal::ctrl_c() => {
