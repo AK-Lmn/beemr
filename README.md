@@ -293,7 +293,7 @@ source and approved by hand before signing.
 
 ## Development
 
-Needs Rust 1.89 or newer.
+Needs Rust 1.92 or newer.
 
 ```sh
 cargo build --release                       # binary in target/release/beemr

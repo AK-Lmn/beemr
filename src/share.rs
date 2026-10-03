@@ -5,20 +5,23 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use futures::io::{AsyncRead, AsyncWrite};
 use futures::StreamExt;
 use libp2p::{Multiaddr, PeerId, Stream};
 use tokio::io::AsyncReadExt;
-use tokio::sync::Notify;
+use tokio::sync::{watch, Notify};
 use tokio::time::Instant;
 
 use crate::discovery::{AddressRecord, Dht};
 use crate::identity::DeviceId;
+use crate::nat::NatKind;
 use crate::node::{self, Mode, Node, NodeOptions, Status, UpnpState};
 use crate::path::PathKind;
 use crate::profile::Profile;
 use crate::progress::Progress;
-use crate::proto::{self, EntryKind, Framed, Message, Side, MAX_CHUNK};
+use crate::proto::{self, Binding, EntryKind, Framed, Message, Side, MAX_CHUNK};
 use crate::ticket::{self, ShareSecret, Ticket};
+use crate::tor::{self, Tor};
 use crate::util::{format_bytes, format_duration};
 use crate::{crypto, Context as _, Error, Result};
 
@@ -28,6 +31,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(60);
 /// Refresh the DHT record at least this often, even if nothing changed.
 const REPUBLISH_EVERY: Duration = Duration::from_secs(15 * 60);
+/// How long to wait for the network type before assuming it's hard to reach.
+const CLASSIFY_FOR: Duration = Duration::from_secs(20);
 
 pub struct ShareOptions {
     pub path: PathBuf,
@@ -81,10 +86,10 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
         port: node.port(),
         lan: node.lan_ips(!network.public),
     };
+    let tor_dir = (network.public || tor::forced()).then(|| profile.config.dir().to_path_buf());
     let share = Arc::new(Share {
         node: node.clone(),
         secret,
-        local_peer: node.peer_id(),
         profile,
         content,
         allowed: options.allowed,
@@ -98,6 +103,7 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
     println!("    beemr get {}", ticket.encode());
     eprintln!();
 
+    let (onion_tx, onion_rx) = watch::channel(None);
     if let Some(dht) = &dht {
         let name = share.profile.name.clone();
         let identity = share.profile.identity.clone();
@@ -109,6 +115,7 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
             name,
             salt,
             !network.public,
+            onion_rx,
         ));
         tokio::spawn(find_full_relays(node.clone(), dht.clone()));
         if options.relay_for_others {
@@ -151,6 +158,9 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
         network.public,
         options.relay_for_others,
     ));
+    if let (Some(dir), Some(_)) = (tor_dir, &dht) {
+        tokio::spawn(Arc::clone(&share).offer_tor_if_hard_to_reach(dir, onion_tx));
+    }
     let outcome = tokio::select! {
         outcome = share.wait_until_finished() => outcome,
         _ = tokio::signal::ctrl_c() => {
@@ -309,6 +319,7 @@ pub fn record_from_status(
     name: &str,
     status: &Status,
     include_loopback: bool,
+    onion: Option<Multiaddr>,
 ) -> AddressRecord {
     let mut addrs: Vec<Multiaddr> = Vec::new();
     let mut push = |a: &Multiaddr| {
@@ -344,6 +355,7 @@ pub fn record_from_status(
             .filter(|r| r.full)
             .map(|r| r.addr.clone())
             .collect(),
+        onion,
     }
 }
 
@@ -355,6 +367,7 @@ pub async fn publish_record(
     name: String,
     salt: Vec<u8>,
     include_loopback: bool,
+    mut onion: watch::Receiver<Option<Multiaddr>>,
 ) {
     let mut status = node.status();
     let mut last: Option<(AddressRecord, Instant)> = None;
@@ -364,11 +377,13 @@ pub async fn publish_record(
             &name,
             &status.borrow_and_update(),
             include_loopback,
+            onion.borrow_and_update().clone(),
         );
         let stale = last
             .as_ref()
             .is_none_or(|(prev, at)| *prev != record || at.elapsed() > REPUBLISH_EVERY);
-        let reachable = !record.addrs.is_empty() || !record.full_relays.is_empty();
+        let reachable =
+            !record.addrs.is_empty() || !record.full_relays.is_empty() || record.onion.is_some();
         if stale && reachable && dht.publish(&identity, &salt, &record).await.is_ok() {
             last = Some((record, Instant::now()));
         }
@@ -378,6 +393,7 @@ pub async fn publish_record(
                 if changed.is_err() { return }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
+            Ok(()) = onion.changed() => {}
             _ = tokio::time::sleep(Duration::from_secs(60)) => {}
         }
     }
@@ -511,7 +527,6 @@ fn permission_bits(meta: &fs::Metadata) -> u32 {
 struct Share {
     node: Node,
     secret: ShareSecret,
-    local_peer: PeerId,
     profile: Profile,
     content: Content,
     allowed: Vec<DeviceId>,
@@ -624,6 +639,31 @@ impl Share {
     }
 
     async fn handle(self: Arc<Self>, node: &Node, peer: PeerId, stream: Stream) {
+        let binding = Binding::Libp2p {
+            initiator: peer,
+            responder: node.peer_id(),
+        };
+        let path = self.path_to(node, &peer);
+        self.serve(stream, binding, path).await;
+    }
+
+    /// Serve a stream that arrived through our onion service.
+    async fn handle_tor(self: Arc<Self>, mut stream: arti_client::DataStream, onion: [u8; 32]) {
+        let mut nonce = [0u8; 32];
+        let read = futures::io::AsyncReadExt::read_exact(&mut stream, &mut nonce);
+        let read = tokio::time::timeout(HANDSHAKE_TIMEOUT, read);
+        if let Ok(Ok(())) = read.await {
+            let binding = Binding::Tor { onion, nonce };
+            self.serve(stream, binding, Some(PathKind::Tor)).await;
+        }
+    }
+
+    async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
+        self: Arc<Self>,
+        stream: S,
+        binding: Binding,
+        path: Option<PathKind>,
+    ) {
         let mut framed = Framed::new(stream);
         let profile = &self.profile;
 
@@ -634,19 +674,13 @@ impl Share {
                 &mut framed,
                 &profile.identity,
                 &profile.name,
-                &self.local_peer,
-                &peer,
+                &binding,
                 Side::Responder,
             )
             .await?;
             match framed.recv().await? {
                 Message::Download { proof }
-                    if proto::download_proof_matches(
-                        &self.secret,
-                        &peer,
-                        &self.local_peer,
-                        &proof,
-                    ) =>
+                    if proto::download_proof_matches(&self.secret, &binding, &proof) =>
                 {
                     Ok(info)
                 }
@@ -682,7 +716,7 @@ impl Share {
         };
 
         eprintln!("  → Sending to {who}");
-        if let Some(path) = self.path_to(node, &peer) {
+        if let Some(path) = path {
             eprintln!("    How: {path}");
         }
         match send_content(&mut framed, &self.content).await {
@@ -696,6 +730,69 @@ impl Share {
             }
         }
         framed.close().await;
+    }
+    /// Start a Tor onion service as a last resort, but only when this device
+    /// is hard to reach: behind a strict NAT (or one we couldn't identify)
+    /// with no beemr relay to fall back on. Runs until the process exits.
+    async fn offer_tor_if_hard_to_reach(
+        self: Arc<Self>,
+        dir: PathBuf,
+        onion: watch::Sender<Option<Multiaddr>>,
+    ) {
+        if !tor::forced() && !self.hard_to_reach().await {
+            return;
+        }
+        eprintln!("  … This network is hard to reach from outside; preparing Tor as a last resort");
+        let service = async {
+            let tor = Tor::start(&dir).await?;
+            let (service, streams) = tor.launch()?;
+            // Publishing the onion service's descriptor takes a little while.
+            let started = Instant::now();
+            while !service.is_running() && started.elapsed() < Duration::from_secs(120) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok::<_, Error>((tor, service, streams))
+        };
+        let (_tor, service, streams) = match service.await {
+            Ok(running) => running,
+            Err(e) => {
+                tracing::debug!(error = %e, "couldn't start Tor");
+                return;
+            }
+        };
+        let _ = onion.send(Some(service.multiaddr()));
+        eprintln!("  ✓ Tor ready as a last resort (slowest, but gets through any firewall)");
+        let id = service.id();
+        let mut streams = std::pin::pin!(streams);
+        while let Some(stream) = streams.next().await {
+            tokio::spawn(Arc::clone(&self).handle_tor(stream, id));
+        }
+    }
+
+    /// Wait until we know whether this device is hard to reach.
+    async fn hard_to_reach(&self) -> bool {
+        let started = Instant::now();
+        let mut status = self.node.status();
+        loop {
+            {
+                let s = status.borrow_and_update();
+                if s.directly_reachable() || s.relayed.iter().any(|r| r.full) {
+                    return false;
+                }
+                match s.nat {
+                    NatKind::Symmetric => return true,
+                    NatKind::Unknown if started.elapsed() >= CLASSIFY_FOR => return true,
+                    NatKind::Cone | NatKind::Reachable if started.elapsed() >= CLASSIFY_FOR => {
+                        return false
+                    }
+                    _ => {}
+                }
+            }
+            tokio::select! {
+                changed = status.changed() => if changed.is_err() { return false },
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+        }
     }
 }
 
@@ -717,7 +814,10 @@ impl Drop for Slot {
     }
 }
 
-async fn send_content(framed: &mut Framed<Stream>, content: &Content) -> Result<()> {
+async fn send_content(
+    framed: &mut Framed<impl AsyncRead + AsyncWrite + Unpin>,
+    content: &Content,
+) -> Result<()> {
     with_timeout(framed.send(&Message::Header {
         name: content.name.clone(),
         total_bytes: content.total_bytes,
@@ -753,7 +853,7 @@ async fn send_content(framed: &mut Framed<Stream>, content: &Content) -> Result<
 }
 
 async fn send_file(
-    framed: &mut Framed<Stream>,
+    framed: &mut Framed<impl AsyncRead + AsyncWrite + Unpin>,
     item: &Item,
     progress: &mut Progress,
 ) -> Result<()> {

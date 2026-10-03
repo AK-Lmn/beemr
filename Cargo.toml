@@ -2,13 +2,22 @@
 name = "beemr"
 version = "0.3.0"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.92"
 repository = "https://github.com/osmanahmadxai/beemr"
 description = "Send files and folders straight to another device over the internet. No servers, no accounts, no setup."
 license = "MIT"
 
 [dependencies]
+arti-client = { version = "0.47", default-features = false, features = [
+    "compression",
+    "onion-service-client",
+    "onion-service-service",
+    "rustls",
+    "static-sqlite",
+    "tokio",
+] }
 base64 = "0.22"
+data-encoding = "2"
 crab_nat = "0.8"
 futures = "0.3"
 getrandom = "0.2"
@@ -36,9 +45,14 @@ libp2p = { version = "0.57", default-features = false, features = [
 libp2p-stream = "0.5.0-alpha"
 mainline = "8"
 netdev = "0.46"
+safelog = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+tor-cell = "0.47"
+tor-hsservice = "0.47"
+tor-proto = { version = "0.47", features = ["hs-service"] }
+tor-rtcompat = { version = "0.47", default-features = false, features = ["tokio", "rustls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }

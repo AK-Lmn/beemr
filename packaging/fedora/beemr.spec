@@ -11,46 +11,56 @@ SourceLicense:  MIT
 # Licenses of the bundled Rust crates, from %%{cargo_license_summary}:
 # (MIT OR Apache-2.0) AND Apache-2.0
 # (MIT OR Apache-2.0) AND Unicode-3.0
+# 0BSD OR MIT OR Apache-2.0
 # Apache-2.0
 # Apache-2.0 AND ISC
 # Apache-2.0 OR ISC OR MIT
 # Apache-2.0 OR MIT
 # Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+# BSD-2-Clause
+# BSD-2-Clause OR Apache-2.0 OR MIT
 # BSD-2-Clause OR MIT
 # BSD-3-Clause
+# BSD-3-Clause OR MIT OR Apache-2.0
+# BSL-1.0
+# CC0-1.0
 # ISC
 # ISC AND (Apache-2.0 OR ISC)
 # ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)
+# LGPL-3.0-or-later OR MPL-2.0
 # MIT
-# MIT OR Apache-2.0
-# MIT OR Apache-2.0 OR BSD-1-Clause
-# MIT OR Apache-2.0 OR LGPL-2.1-or-later
 # MIT OR Apache-2.0 OR Zlib
-# MIT OR BSD-3-Clause
 # MPL-2.0
 # Unicode-3.0
+# Unlicense
 # Unlicense OR MIT
 # Zlib
-# Zlib OR Apache-2.0 OR MIT
+# SQLite (bundled by libsqlite3-sys for Tor's directory cache): blessing
 License:        %{shrink:
     MIT AND
     Apache-2.0 AND
+    BSD-2-Clause AND
     BSD-3-Clause AND
+    BSL-1.0 AND
+    CC0-1.0 AND
     ISC AND
     MPL-2.0 AND
     Unicode-3.0 AND
+    Unlicense AND
     Zlib AND
+    blessing AND
+    (0BSD OR MIT OR Apache-2.0) AND
     (Apache-2.0 OR ISC OR MIT) AND
     (Apache-2.0 OR ISC OR MIT-0) AND
+    (Apache-2.0 OR ISC) AND
     (Apache-2.0 OR MIT) AND
     (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT) AND
+    (BSD-2-Clause OR Apache-2.0 OR MIT) AND
     (BSD-2-Clause OR MIT) AND
-    (MIT OR Apache-2.0 OR BSD-1-Clause) AND
-    (MIT OR Apache-2.0 OR LGPL-2.1-or-later) AND
+    (BSD-3-Clause OR MIT OR Apache-2.0) AND
+    (LGPL-3.0-or-later OR MPL-2.0) AND
     (MIT OR Apache-2.0 OR Zlib) AND
-    (MIT OR BSD-3-Clause) AND
-    (Unlicense OR MIT) AND
-    (Zlib OR Apache-2.0 OR MIT)
+    (Unlicense OR MIT)
 }
 # LICENSE.dependencies contains the full per-crate license breakdown.
 URL:            https://github.com/osmanahmadxai/beemr

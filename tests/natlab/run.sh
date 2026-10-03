@@ -123,7 +123,7 @@ echo "== sender's view"
 docker exec "$P-host-a" sh -c "sed 's/\x1b\[[0-9;]*m//g' /tmp/share.log | grep -vE 'DEBUG|INFO|WARN' | grep -E 'Sending to|How:|received everything|Refused|failed'" | sed 's/^/   /'
 echo "== diagnostics"
 for h in host-a:/tmp/share.log host-b:/tmp/get.log; do
-  docker exec "$P-${h%%:*}" sh -c "sed 's/\x1b\[[0-9;]*m//g' ${h#*:} | grep -iE 'hole punching finished|port prediction|requesting relay' | cut -c 12-400 | head -12" \
+  docker exec "$P-${h%%:*}" sh -c "sed 's/\x1b\[[0-9;]*m//g' ${h#*:} | grep -iE 'hole punching finished|port prediction|requesting relay|connection established.*(10\.10|172\.30\.0\.(10|20))' | cut -c 12-400 | head -12" \
     | sed "s/^/   ${h%%:*}: /"
 done
 set -e

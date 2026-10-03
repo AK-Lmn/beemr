@@ -424,7 +424,7 @@ impl Node {
             .values()
             .filter(|c| c.peer == *peer)
             .collect();
-        if let Some(direct) = conns.iter().find(|c| c.relay.is_none()) {
+        if let Some(direct) = conns.iter().find(|c| !is_relayed(&c.addr)) {
             if let Some(how) = shared.punched.get(peer) {
                 return Some(how.clone());
             }
@@ -640,6 +640,10 @@ pub fn relay_transport_ok(addr: &Multiaddr) -> bool {
 /// A public IPv4 QUIC address as reported by a peer (`/ip4/…/udp/…/quic-v1`).
 /// Private addresses count too in isolated test networks.
 fn observed_quic_v4(addr: &Multiaddr, allow_private: bool) -> Option<SocketAddr> {
+    // Over a relayed connection, peers see the relay's address, not ours.
+    if is_relayed(addr) {
+        return None;
+    }
     let mut iter = addr.iter();
     match (iter.next(), iter.next(), iter.next()) {
         (Some(Protocol::Ip4(ip)), Some(Protocol::Udp(port)), Some(Protocol::QuicV1))
@@ -848,6 +852,23 @@ impl Driver {
         }
     }
 
+    /// The peer we're directly connected to at the transport address in
+    /// front of a circuit address (`/ip4/…/udp/…/quic-v1/p2p-circuit`).
+    fn peer_at(&self, circuit: &Multiaddr) -> Option<PeerId> {
+        let transport = |a: &Multiaddr| -> Multiaddr {
+            a.iter()
+                .take_while(|p| *p != Protocol::P2pCircuit)
+                .filter(|p| !matches!(p, Protocol::P2p(_)))
+                .collect()
+        };
+        let wanted = transport(circuit);
+        self.shared()
+            .connections
+            .values()
+            .find(|c| !is_relayed(&c.addr) && transport(&c.addr) == wanted)
+            .map(|c| c.peer)
+    }
+
     fn publish_status(&mut self) {
         let connected_peers = self.swarm.connected_peers().count();
         let shared = self.shared();
@@ -968,10 +989,13 @@ impl Driver {
                     }
                 };
                 let relay = if endpoint.is_relayed() {
-                    relay_of(&addr)
+                    // Inbound circuits name the relay only by its transport
+                    // address; find the relay among our connections.
+                    relay_of(&addr).or_else(|| self.peer_at(&addr))
                 } else {
                     None
                 };
+                tracing::debug!(peer = %peer_id, %addr, ?relay, "connection established");
                 self.shared().connections.insert(
                     connection_id,
                     ConnInfo {

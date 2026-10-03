@@ -44,6 +44,34 @@ jobs:
       - run: cargo build --release --locked
       - run: tests/docs-smoke.sh target/release/beemr
 
+  tor:
+    # The last-resort path, over the real Tor network (the NAT lab is offline).
+    name: Tor fallback (real network)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Share and download over Tor only
+        shell: bash
+        env:
+          BEEMR_FORCE_PATH: tor
+        run: |
+          B=$PWD/target/release/beemr
+          mkdir -p a b dl
+          head -c 2000000 /dev/urandom > file.bin
+          BEEMR_HOME=$PWD/a $B share file.bin > ticket 2> share.log &
+          for _ in $(seq 1 90); do grep -q "Tor ready" share.log && break; sleep 2; done
+          cat share.log
+          grep -q "Tor ready" share.log || { echo "::error::the onion service didn't start"; exit 1; }
+          BEEMR_HOME=$PWD/b timeout 300 $B get "$(awk '{print $3}' ticket)" -o dl 2>&1 | tee get.log
+          grep -q "How: relayed through Tor" get.log || { echo "::error::expected a Tor transfer"; exit 1; }
+          cmp file.bin dl/file.bin
+          sleep 2
+          grep -q "How: relayed through Tor" share.log
+
   natlab:
     name: NAT lab (${{ matrix.scenario }})
     runs-on: ubuntu-latest

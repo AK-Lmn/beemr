@@ -33,11 +33,13 @@ pub struct AddressRecord {
     pub addrs: Vec<Multiaddr>,
     /// Circuits through relays that allow full file transfers.
     pub full_relays: Vec<Multiaddr>,
+    /// A Tor onion service, the last resort for hard-to-reach devices.
+    pub onion: Option<Multiaddr>,
 }
 
 impl AddressRecord {
     /// `version | peer (u8 len) | name (u8 len) | count (u8) | (flag | u16 len | multiaddr)*`,
-    /// where flag 1 marks a full relay. Addresses that don't fit in the
+    /// where flag 1 marks a full relay and flag 2 an onion service. Addresses that don't fit in the
     /// 1000-byte limit are dropped, lowest priority (latest) first.
     pub fn encode(&self) -> Vec<u8> {
         let peer = self.peer.to_bytes();
@@ -50,9 +52,10 @@ impl AddressRecord {
         out.push(0);
         let mut count = 0u8;
         let flagged = self
-            .full_relays
+            .onion
             .iter()
-            .map(|a| (1u8, a))
+            .map(|a| (2u8, a))
+            .chain(self.full_relays.iter().map(|a| (1u8, a)))
             .chain(self.addrs.iter().map(|a| (0u8, a)));
         for (flag, addr) in flagged {
             let bytes = addr.to_vec();
@@ -83,16 +86,16 @@ impl AddressRecord {
         let name_len = take(1)?[0] as usize;
         let name = String::from_utf8(take(name_len)?.to_vec()).ok()?;
         let count = take(1)?[0];
-        let (mut addrs, mut full_relays) = (Vec::new(), Vec::new());
+        let (mut addrs, mut full_relays, mut onion) = (Vec::new(), Vec::new(), None);
         for _ in 0..count {
             let flag = take(1)?[0];
             let len = take(2)?;
             let len = u16::from_be_bytes([len[0], len[1]]) as usize;
             if let Ok(addr) = Multiaddr::try_from(take(len)?.to_vec()) {
-                if flag == 1 {
-                    full_relays.push(addr);
-                } else {
-                    addrs.push(addr);
+                match flag {
+                    1 => full_relays.push(addr),
+                    2 => onion = Some(addr),
+                    _ => addrs.push(addr),
                 }
             }
         }
@@ -101,6 +104,7 @@ impl AddressRecord {
             name,
             addrs,
             full_relays,
+            onion,
         })
     }
 }
@@ -254,6 +258,11 @@ mod tests {
             )
             .parse()
             .unwrap()],
+            onion: Some(
+                "/onion3/pg6mmjiyjmcrsslvykfwnntlaru7p5svn6y2ymmju6nubxndf4pscryd:1"
+                    .parse()
+                    .unwrap(),
+            ),
         };
         assert_eq!(AddressRecord::decode(&record.encode()), Some(record));
         assert_eq!(AddressRecord::decode(&[9, 9, 9]), None);
@@ -273,6 +282,7 @@ mod tests {
             name: "x".repeat(200),
             addrs: vec![addr; 40],
             full_relays: vec![],
+            onion: None,
         };
         let encoded = record.encode();
         assert!(encoded.len() <= MAX_VALUE);
@@ -298,6 +308,7 @@ mod tests {
             name: "test".into(),
             addrs: vec!["/ip4/10.0.0.1/tcp/1".parse().unwrap()],
             full_relays: vec![],
+            onion: None,
         };
         publisher.publish(&me, b"test", &record).await.unwrap();
         assert_eq!(resolver.resolve(&me.id(), b"test").await, Some(record));

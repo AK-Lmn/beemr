@@ -3,23 +3,27 @@
 //!
 //! 1. Direct: LAN addresses, public/IPv6 addresses, UPnP-mapped ports.
 //! 2. Hole punching: connect through a relay, then DCUtR upgrades to direct.
-//! 3. Full relay: if hole punching fails, a beemr relay carries the data.
+//! 3. Port prediction: if hole punching fails because one side's NAT is strict.
+//! 4. Full relay: a beemr relay, or another user's reachable beemr, carries the data.
+//! 5. Tor: if the device published an onion service and nothing else worked.
 //!
-//! Transfers need a direct connection or a full relay, since public relays
-//! only allow ~128 KiB per connection.
+//! Transfers need a direct connection, a full relay or Tor, since public
+//! relays only allow ~128 KiB per connection.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::ConnectionId;
 use libp2p::{Multiaddr, PeerId};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::discovery::{AddressRecord, Dht};
 use crate::identity::DeviceId;
 use crate::node::{self, Node, NodeEvent};
+use crate::tor::{self, Tor};
 use crate::{Error, Result};
 
 /// How long to give hole punching before falling back to a full relay: enough
@@ -29,6 +33,11 @@ const RESOLVE_RETRY: Duration = Duration::from_secs(3);
 const RERESOLVE_EVERY: Duration = Duration::from_secs(10);
 /// How long QUIC relay circuits get before TCP ones are tried too.
 const TCP_CIRCUIT_DELAY: Duration = Duration::from_secs(3);
+/// If nothing at all has connected this long after finding the device, try
+/// Tor alongside (UDP may be blocked, and Tor takes a while to start).
+const TOR_IF_NOTHING_AFTER: Duration = Duration::from_secs(20);
+/// Time allowed for starting Tor and reaching the onion service.
+const TOR_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// Where to look for a device.
 pub struct Target {
@@ -36,6 +45,24 @@ pub struct Target {
     pub lan: Vec<Multiaddr>,
     /// A DHT record to look up for the device's current addresses.
     pub record: Option<(Dht, DeviceId, Vec<u8>)>,
+    /// Where Tor may keep its state, if Tor may be used.
+    pub tor_dir: Option<PathBuf>,
+}
+
+/// How we reached the device.
+// Returned once per download, so the size difference doesn't matter.
+#[allow(clippy::large_enum_variant)]
+pub enum Connection {
+    Libp2p(Route),
+    Tor(TorConnection),
+}
+
+pub struct TorConnection {
+    pub stream: arti_client::DataStream,
+    /// The onion service's identity, for the handshake.
+    pub onion: [u8; 32],
+    /// Keeps the Tor client running while the stream is in use.
+    pub tor: Tor,
 }
 
 #[derive(Clone)]
@@ -55,11 +82,11 @@ impl Route {
     }
 }
 
-/// Connect to a target, returning the peer to open streams to. On success,
-/// only connections that can carry a transfer remain open to that peer.
-pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<Route> {
+/// Connect to a target. Over libp2p, only connections that can carry a
+/// transfer remain open to the peer afterwards.
+pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<Connection> {
     let mut target = target;
-    if force_relay() {
+    if force_relay() || tor::forced() {
         // Diagnostics: ignore direct addresses so the relay and hole-punching
         // path is exercised even between devices on the same network.
         target.lan.clear();
@@ -80,6 +107,12 @@ pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<R
         punch_attempted: false,
         record_found: false,
         errors: Vec::new(),
+        tor_dir: target.tor_dir.clone(),
+        onion: None,
+        tor: None,
+        tor_deadline: None,
+        tor_extended: false,
+        tor_error: None,
     };
     for addr in target.lan {
         let id = node.dial(DialOpts::unknown_peer_id().address(addr).build());
@@ -95,7 +128,9 @@ pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<R
             let mut last: Option<AddressRecord> = None;
             loop {
                 if let Some(record) = dht.resolve(&device, &salt).await {
-                    let reachable = !record.addrs.is_empty() || !record.full_relays.is_empty();
+                    let reachable = !record.addrs.is_empty()
+                        || !record.full_relays.is_empty()
+                        || record.onion.is_some();
                     if reachable && last.as_ref() != Some(&record) {
                         last = Some(record.clone());
                         if records_tx.send(record).await.is_err() {
@@ -118,14 +153,39 @@ pub async fn connect(node: &Node, target: Target, timeout: Duration) -> Result<R
     tokio::pin!(deadline);
     loop {
         if let Some(route) = ladder.evaluate().await? {
-            return Ok(route);
+            return Ok(Connection::Libp2p(route));
         }
         if !resolving && ladder.lan_dials.is_empty() && ladder.lan_peers.is_empty() {
             return Err(ladder.diagnose());
         }
+        if ladder.tor.is_some() {
+            // Starting Tor and reaching an onion service takes a while.
+            let at_least = Instant::now() + TOR_TIMEOUT;
+            if deadline.deadline() < at_least && !ladder.tor_extended {
+                ladder.tor_extended = true;
+                deadline.as_mut().reset(at_least);
+            }
+        }
         let punch_deadline = ladder.hole_punch_deadline;
         let delayed_at = ladder.delayed_at;
+        let tor_deadline = ladder.tor_deadline;
         tokio::select! {
+            Some(result) = recv_opt(&mut ladder.tor) => match result {
+                Ok(connection) => return Ok(Connection::Tor(connection)),
+                Err(e) => {
+                    ladder.tor = None;
+                    ladder.tor_error = Some(e.to_string());
+                    if ladder.gave_up_on_libp2p() {
+                        return Err(ladder.diagnose());
+                    }
+                }
+            },
+            _ = sleep_until_opt(tor_deadline) => {
+                ladder.tor_deadline = None;
+                if ladder.expected.is_some_and(|p| ladder.node.connections_to(&p).is_empty()) {
+                    ladder.start_tor();
+                }
+            }
             event = ladder.events.recv() => match event {
                 Ok(event) => ladder.on_event(event),
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -175,6 +235,13 @@ impl Drop for AbortOnDrop {
     }
 }
 
+async fn recv_opt<T>(rx: &mut Option<oneshot::Receiver<T>>) -> Option<T> {
+    match rx {
+        Some(rx) => rx.await.ok(),
+        None => std::future::pending().await,
+    }
+}
+
 async fn sleep_until_opt(deadline: Option<Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -203,6 +270,15 @@ struct Ladder<'a> {
     punch_attempted: bool,
     record_found: bool,
     errors: Vec<String>,
+    tor_dir: Option<PathBuf>,
+    /// The device's onion service, from its record.
+    onion: Option<Multiaddr>,
+    /// A Tor connection attempt in progress.
+    tor: Option<oneshot::Receiver<Result<TorConnection>>>,
+    tor_deadline: Option<Instant>,
+    /// The overall deadline has been extended for Tor.
+    tor_extended: bool,
+    tor_error: Option<String>,
 }
 
 impl Ladder<'_> {
@@ -249,6 +325,15 @@ impl Ladder<'_> {
         self.record_found = true;
         self.expected = Some(record.peer);
         let peer = record.peer;
+        if record.onion.is_some() && self.onion.is_none() && self.tor_dir.is_some() {
+            self.tor_deadline = Some(Instant::now() + TOR_IF_NOTHING_AFTER);
+        }
+        self.onion = record.onion.or(self.onion.take());
+        if tor::forced() {
+            // Diagnostics: go straight to Tor.
+            self.start_tor();
+            return;
+        }
 
         // Relay circuits over QUIC go first: our connection to the relay then
         // runs over QUIC, so we learn a QUIC address to hole-punch with (QUIC
@@ -359,7 +444,11 @@ impl Ladder<'_> {
                     return Ok(Some(Route::on(peer)));
                 }
                 if self.full_relay_dials.is_empty() {
-                    return Err(no_route_error());
+                    // The last resort, if the device offers it.
+                    self.start_tor();
+                    if self.tor.is_none() {
+                        return Err(self.diagnose());
+                    }
                 }
             }
         }
@@ -392,7 +481,39 @@ impl Ladder<'_> {
         let _ = tokio::time::timeout(Duration::from_secs(2), wait).await;
     }
 
+    /// Start connecting over Tor, if the device offers an onion service and
+    /// we haven't tried yet.
+    fn start_tor(&mut self) {
+        let (Some(onion), Some(dir)) = (self.onion.clone(), self.tor_dir.clone()) else {
+            return;
+        };
+        if self.tor.is_some() || self.tor_error.is_some() {
+            return;
+        }
+        eprintln!("  Trying Tor: the other device is hard to reach (this can take a minute)…");
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let result = async {
+                let tor = Tor::start(&dir).await?;
+                let (stream, onion) = tor.connect(&onion).await?;
+                Ok(TorConnection { stream, onion, tor })
+            };
+            let _ = tx.send(result.await);
+        });
+        self.tor = Some(rx);
+    }
+
+    /// Whether libp2p paths are exhausted (Tor is all that's left).
+    fn gave_up_on_libp2p(&self) -> bool {
+        tor::forced() || (self.hole_punch_failed && self.full_relay_dials.is_empty())
+    }
+
     fn diagnose(&self) -> Error {
+        if let Some(error) = &self.tor_error {
+            return Error::new(format!(
+                "couldn't connect directly, through a relay, or over Tor ({error})."
+            ));
+        }
         if self.seen_relayed {
             return no_route_error();
         }

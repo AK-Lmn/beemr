@@ -2,7 +2,8 @@
 //!
 //! There are no servers. Devices connect directly when they can (same network,
 //! IPv6, a UPnP-opened port), punch through NATs with the help of public relays
-//! when they can't, and fall back to relaying through other beemr devices.
+//! when they can't, and fall back to relaying through other beemr devices,
+//! and finally Tor.
 //! Devices find each other through signed records on the BitTorrent Mainline DHT.
 //!
 //! See `PROTOCOL.md` for the wire format.
@@ -36,6 +37,7 @@ pub mod relay;
 pub mod service;
 pub mod share;
 pub mod ticket;
+pub mod tor;
 pub mod util;
 
 pub use error::{Context, Error, Result};

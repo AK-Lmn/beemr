@@ -16,7 +16,7 @@ opening a public issue.
 
 ## Getting started
 
-You need Rust 1.89 or newer.
+You need Rust 1.92 or newer.
 
 ```sh
 git clone https://github.com/osmanahmadxai/beemr

@@ -303,24 +303,61 @@ pub struct PeerInfo {
     pub name: String,
 }
 
-fn hello_payload(side: Side, signer: &PeerId, other: &PeerId) -> Vec<u8> {
-    [side.label(), &signer.to_bytes(), &other.to_bytes()].concat()
+/// What a connection's identity signatures and download proofs are bound to,
+/// so they can't be replayed on another connection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Binding {
+    /// A libp2p connection: both peer IDs, authenticated by its Noise or TLS
+    /// encryption.
+    Libp2p {
+        initiator: PeerId,
+        responder: PeerId,
+    },
+    /// A Tor connection: the onion service's identity (authenticated by Tor)
+    /// and a fresh nonce the initiator sends first.
+    Tor { onion: [u8; 32], nonce: [u8; 32] },
 }
 
-/// Exchange `Hello`s. Each device signs both libp2p peer IDs of this
-/// connection, which binds its long-term identity to this encrypted session,
-/// so a relay or man-in-the-middle can't splice or replay it.
+impl Binding {
+    /// The connection-specific bytes, ordered so that the signer comes first.
+    fn parts(&self, signer: Side) -> Vec<u8> {
+        match self {
+            Binding::Libp2p {
+                initiator,
+                responder,
+            } => {
+                let (first, second) = match signer {
+                    Side::Initiator => (initiator, responder),
+                    Side::Responder => (responder, initiator),
+                };
+                [first.to_bytes(), second.to_bytes()].concat()
+            }
+            Binding::Tor { onion, nonce } => [b"tor".as_slice(), onion, nonce].concat(),
+        }
+    }
+
+    fn proof_parts(&self) -> Vec<u8> {
+        self.parts(Side::Initiator)
+    }
+}
+
+fn hello_payload(signer: Side, binding: &Binding) -> Vec<u8> {
+    [signer.label(), &binding.parts(signer)].concat()
+}
+
+/// Exchange `Hello`s. Each device signs the connection's [`Binding`], which
+/// ties its long-term identity to this encrypted session, so a relay or
+/// man-in-the-middle can't splice or replay it.
 pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     framed: &mut Framed<S>,
     me: &Identity,
     my_name: &str,
-    local: &PeerId,
-    remote: &PeerId,
+    binding: &Binding,
     side: Side,
 ) -> Result<PeerInfo> {
     let hello = Message::Hello {
         device: me.id(),
-        signature: me.sign(&hello_payload(side, local, remote)),
+        signature: me.sign(&hello_payload(side, binding)),
         name: my_name.to_string(),
     };
     if side == Side::Initiator {
@@ -332,7 +369,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             signature,
             name,
         } => {
-            if !device.verify(&hello_payload(side.other(), remote, local), &signature) {
+            if !device.verify(&hello_payload(side.other(), binding), &signature) {
                 bail!("the other device's identity could not be verified");
             }
             PeerInfo {
@@ -350,32 +387,12 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
 }
 
 /// Proof that the downloader holds the ticket, bound to this connection.
-pub fn download_proof(secret: &ShareSecret, initiator: &PeerId, responder: &PeerId) -> [u8; 32] {
-    crypto::hmac(
-        secret,
-        &[
-            b"beemr/download",
-            &initiator.to_bytes(),
-            &responder.to_bytes(),
-        ],
-    )
+pub fn download_proof(secret: &ShareSecret, binding: &Binding) -> [u8; 32] {
+    crypto::hmac(secret, &[b"beemr/download", &binding.proof_parts()])
 }
 
-pub fn download_proof_matches(
-    secret: &ShareSecret,
-    initiator: &PeerId,
-    responder: &PeerId,
-    proof: &[u8; 32],
-) -> bool {
-    crypto::hmac_matches(
-        secret,
-        &[
-            b"beemr/download",
-            &initiator.to_bytes(),
-            &responder.to_bytes(),
-        ],
-        proof,
-    )
+pub fn download_proof_matches(secret: &ShareSecret, binding: &Binding, proof: &[u8; 32]) -> bool {
+    crypto::hmac_matches(secret, &[b"beemr/download", &binding.proof_parts()], proof)
 }
 
 #[cfg(test)]
@@ -445,46 +462,75 @@ mod tests {
         peer.await.unwrap();
     }
 
-    #[tokio::test]
-    async fn handshake_verifies_both_sides() {
+    fn libp2p(initiator: PeerId, responder: PeerId) -> Binding {
+        Binding::Libp2p {
+            initiator,
+            responder,
+        }
+    }
+
+    async fn run_handshake(alice_sees: Binding, bob_sees: Binding) -> (Result<PeerInfo>, Result<PeerInfo>) {
         let (mut a, mut b) = pipe();
         let (alice, bob) = (Identity::generate(), Identity::generate());
+        let responder = tokio::spawn(async move {
+            handshake(&mut b, &bob, "Bob", &bob_sees, Side::Responder).await
+        });
+        let alice = handshake(&mut a, &alice, "Alice", &alice_sees, Side::Initiator).await;
+        (alice, responder.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn handshake_verifies_both_sides() {
         let (pa, pb) = (PeerId::random(), PeerId::random());
-        let (alice_id, bob_id) = (alice.id(), bob.id());
-        let responder =
-            tokio::spawn(
-                async move { handshake(&mut b, &bob, "Bob", &pb, &pa, Side::Responder).await },
-            );
-        let seen_by_alice = handshake(&mut a, &alice, "Alice", &pa, &pb, Side::Initiator)
-            .await
-            .unwrap();
-        let seen_by_bob = responder.await.unwrap().unwrap();
-        assert_eq!(seen_by_alice.device, bob_id);
-        assert_eq!(seen_by_alice.name, "Bob");
-        assert_eq!(seen_by_bob.device, alice_id);
+        let (alice, bob) = run_handshake(libp2p(pa, pb), libp2p(pa, pb)).await;
+        assert_eq!(alice.unwrap().name, "Bob");
+        assert_eq!(bob.unwrap().name, "Alice");
+
+        let tor = Binding::Tor {
+            onion: [7; 32],
+            nonce: [8; 32],
+        };
+        let (alice, bob) = run_handshake(tor.clone(), tor).await;
+        assert!(alice.is_ok() && bob.is_ok());
     }
 
     #[tokio::test]
     async fn handshake_rejects_signature_for_another_connection() {
-        let (mut a, mut b) = pipe();
-        let (alice, bob) = (Identity::generate(), Identity::generate());
         let (pa, pb, elsewhere) = (PeerId::random(), PeerId::random(), PeerId::random());
         // Alice signs for a different remote peer than Bob actually is.
-        let responder =
-            tokio::spawn(
-                async move { handshake(&mut b, &bob, "Bob", &pb, &pa, Side::Responder).await },
-            );
-        let _ = handshake(&mut a, &alice, "Alice", &pa, &elsewhere, Side::Initiator).await;
-        assert!(responder.await.unwrap().is_err());
+        let (_, bob) = run_handshake(libp2p(pa, elsewhere), libp2p(pa, pb)).await;
+        assert!(bob.is_err());
+
+        // A Tor hello can't be replayed with another nonce.
+        let (_, bob) = run_handshake(
+            Binding::Tor { onion: [7; 32], nonce: [1; 32] },
+            Binding::Tor { onion: [7; 32], nonce: [2; 32] },
+        )
+        .await;
+        assert!(bob.is_err());
     }
 
     #[test]
-    fn download_proof_is_bound_to_peers() {
+    fn download_proof_is_bound_to_the_connection() {
         let secret = [1; 16];
         let (a, b) = (PeerId::random(), PeerId::random());
-        let proof = download_proof(&secret, &a, &b);
-        assert!(download_proof_matches(&secret, &a, &b, &proof));
-        assert!(!download_proof_matches(&secret, &b, &a, &proof));
-        assert!(!download_proof_matches(&[2; 16], &a, &b, &proof));
+        let proof = download_proof(&secret, &libp2p(a, b));
+        assert!(download_proof_matches(&secret, &libp2p(a, b), &proof));
+        assert!(!download_proof_matches(&secret, &libp2p(b, a), &proof));
+        assert!(!download_proof_matches(&[2; 16], &libp2p(a, b), &proof));
+        let tor = |nonce| Binding::Tor { onion: [7; 32], nonce };
+        let proof = download_proof(&secret, &tor([1; 32]));
+        assert!(!download_proof_matches(&secret, &tor([2; 32]), &proof));
+    }
+
+    #[test]
+    fn libp2p_binding_matches_the_original_wire_format() {
+        // Version 2.0 signed `label | own peer | other peer`; keep it that way.
+        let (a, b) = (PeerId::random(), PeerId::random());
+        let payload = hello_payload(Side::Responder, &libp2p(a, b));
+        assert_eq!(
+            payload,
+            [b"beemr/hello/responder".as_slice(), &b.to_bytes(), &a.to_bytes()].concat()
+        );
     }
 }

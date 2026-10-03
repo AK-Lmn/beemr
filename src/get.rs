@@ -4,16 +4,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use libp2p::Stream;
+use futures::io::{AsyncRead, AsyncWrite};
 use tokio::io::AsyncWriteExt;
 
-use crate::connect::{self, Target};
+use crate::connect::{self, Connection, Target};
 use crate::discovery::Dht;
 use crate::node::{self, Mode, Node, NodeOptions};
+use crate::path::PathKind;
 use crate::profile::Profile;
 use crate::progress::Progress;
-use crate::proto::{self, EntryKind, Framed, Message, Side};
+use crate::proto::{self, Binding, EntryKind, Framed, Message, Side};
 use crate::ticket::Ticket;
+use crate::tor;
 use crate::util::{format_bytes, hex_encode};
 use crate::{crypto, Context as _, Error, Result};
 
@@ -52,30 +54,59 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
             .flat_map(|ip| node::addrs_for(*ip, ticket.port))
             .collect(),
         record: dht.map(|dht| (dht, ticket.device, ticket.record_salt())),
+        tor_dir: (network.public || tor::forced()).then(|| profile.config.dir().to_path_buf()),
     };
-    let route = connect::connect(&node, target, CONNECT_TIMEOUT).await?;
-    // Port prediction may have connected through a second endpoint.
-    let node = route.endpoint.clone().unwrap_or(node);
-    let stream = node
-        .control()
-        .open_stream(route.peer, proto::PROTOCOL)
-        .await
-        .map_err(|e| Error::new(e.to_string()))?;
-    let mut framed = Framed::new(stream);
+    match connect::connect(&node, target, CONNECT_TIMEOUT).await? {
+        Connection::Libp2p(route) => {
+            // Port prediction may have connected through a second endpoint.
+            let node = route.endpoint.clone().unwrap_or(node);
+            let stream = node
+                .control()
+                .open_stream(route.peer, proto::PROTOCOL)
+                .await
+                .map_err(|e| Error::new(e.to_string()))?;
+            let binding = Binding::Libp2p {
+                initiator: node.peer_id(),
+                responder: route.peer,
+            };
+            let path = node.path_to(&route.peer);
+            download(Framed::new(stream), &binding, path, &ticket, &options, &profile).await
+        }
+        Connection::Tor(mut tor) => {
+            // A fresh nonce binds this connection's handshake (see PROTOCOL.md).
+            let nonce: [u8; 32] = crypto::random();
+            with_timeout(async { Ok(futures::AsyncWriteExt::write_all(&mut tor.stream, &nonce).await?) }).await?;
+            let binding = Binding::Tor {
+                onion: tor.onion,
+                nonce,
+            };
+            let path = Some(PathKind::Tor);
+            download(Framed::new(tor.stream), &binding, path, &ticket, &options, &profile).await
+        }
+    }
+}
 
+/// Identify both sides, prove we hold the ticket, then receive and save.
+async fn download<S: AsyncRead + AsyncWrite + Unpin>(
+    mut framed: Framed<S>,
+    binding: &Binding,
+    path: Option<PathKind>,
+    ticket: &Ticket,
+    options: &GetOptions,
+    profile: &Profile,
+) -> Result<PathBuf> {
     let sender = with_timeout(proto::handshake(
         &mut framed,
         &profile.identity,
         &profile.name,
-        &node.peer_id(),
-        &route.peer,
+        binding,
         Side::Initiator,
     ))
     .await?;
     if sender.device != ticket.device {
         bail!("reached a different device than the one that made this ticket");
     }
-    let proof = proto::download_proof(&ticket.secret, &node.peer_id(), &route.peer);
+    let proof = proto::download_proof(&ticket.secret, binding);
     with_timeout(framed.send(&Message::Download { proof })).await?;
 
     let (name, total_bytes, file_count) = match with_timeout(framed.recv()).await? {
@@ -98,7 +129,7 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
             .contacts
             .describe(&sender.device, Some(&sender.name))
     );
-    if let Some(path) = node.path_to(&route.peer) {
+    if let Some(path) = path {
         eprintln!("  How: {path}");
     }
 
@@ -143,7 +174,7 @@ async fn with_timeout<T>(future: impl std::future::Future<Output = Result<T>>) -
 }
 
 async fn receive_content(
-    framed: &mut Framed<Stream>,
+    framed: &mut Framed<impl AsyncRead + AsyncWrite + Unpin>,
     staging: &Path,
     root: &str,
     total: u64,
@@ -186,7 +217,7 @@ async fn receive_content(
 }
 
 async fn receive_file(
-    framed: &mut Framed<Stream>,
+    framed: &mut Framed<impl AsyncRead + AsyncWrite + Unpin>,
     dest: &Path,
     size: u64,
     mode: u32,
