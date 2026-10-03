@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>beemr</title>
-<meta name="description" content="Peer-to-peer file and message sharing. No servers, no accounts, no setup. End-to-end encrypted.">
+<meta name="description" content="Peer-to-peer file sharing. No servers, no accounts, no setup. End-to-end encrypted.">
 <meta property="og:title" content="beemr">
-<meta property="og:description" content="Peer-to-peer file and message sharing. No servers, no accounts, no setup. End-to-end encrypted.">
+<meta property="og:description" content="Peer-to-peer file sharing. No servers, no accounts, no setup. End-to-end encrypted.">
 <meta property="og:image" content="https://osmanahmadxai.github.io/beemr/beemr-logo.png">
 <meta property="og:url" content="https://osmanahmadxai.github.io/beemr/">
 <meta name="twitter:card" content="summary_large_image">
@@ -37,20 +37,20 @@
 <body>
 <main>
   <h1><img src="beemr-logo.png" alt="beemr" width="1200" height="600"></h1>
-  <p class="tag">Peer-to-peer file and message sharing. No servers, no accounts, no setup. End-to-end encrypted.</p>
+  <p class="tag">Peer-to-peer file sharing. No servers, no accounts, no setup. End-to-end encrypted.</p>
 
 <pre>$ beemr share photos/
 On the other device, run:
 
     beemr get AlTRKOzvjlzG…
 
-$ beemr msg sara "landed! call you later"
-Delivered (direct connection).</pre>
+$ beemr get AlTRKOzvjlzG…        # on the other device
+Saved to ./photos</pre>
 
   <div class="grid">
     <div class="card"><b>Zero configuration</b><span>Direct connections, NAT hole punching, and relays through other beemr devices.</span></div>
     <div class="card"><b>No servers</b><span>Devices find each other on the BitTorrent DHT and connect peer to peer.</span></div>
-    <div class="card"><b>Private</b><span>End-to-end encrypted, device identities, share with one device only.</span></div>
+    <div class="card"><b>Private</b><span>End-to-end encrypted, device identities, share with one device only. Nothing runs in the background.</span></div>
   </div>
 
   <h2>Install</h2>
@@ -87,7 +87,7 @@ sudo zypper install beemr</pre>
 <pre>scoop bucket add beemr https://github.com/osmanahmadxai/scoop-beemr
 scoop install beemr</pre>
 
-  <p>After installing with a package manager, run <code>beemr setup</code> once to name the device and start the background service.</p>
+  <p>After installing with a package manager, run <code>beemr setup</code> once to name the device.</p>
 
   <p>Alpine (<code>.apk</code>), Arch (<code>.pkg.tar.zst</code>), <code>.deb</code>, <code>.rpm</code> and plain binaries are on the
   <a href="https://github.com/osmanahmadxai/beemr/releases/latest">releases page</a>.
@@ -98,7 +98,7 @@ scoop install beemr</pre>
   <p>Windows: <code>irm https://raw.githubusercontent.com/osmanahmadxai/beemr/main/uninstall.ps1 | iex</code>. Package managers: <code>apt remove</code>, <code>dnf remove</code>, <code>snap remove</code>, <code>brew uninstall</code> or <code>scoop uninstall</code> <code>beemr</code>.</p>
 
   <h2>Privacy policy</h2>
-  <p>beemr has no telemetry and sends nothing to the project or its maintainers. To let other devices reach you, it publishes a signed record with this device's ID, its chosen name and its current network addresses on the public BitTorrent DHT, and connects to public IPFS nodes to find relays. Files and messages travel only between the devices involved, end-to-end encrypted. Your identity, contacts and messages are stored only on your device.</p>
+  <p>beemr has no telemetry and sends nothing to the project or its maintainers. While you share something, it publishes a signed record with this device's ID, its chosen name and its current network addresses on the public BitTorrent DHT so the receiver can find it, and connects to public IPFS nodes to find relays. Files travel only between the devices involved, end-to-end encrypted. Your identity and contacts are stored only on your device.</p>
 
   <h2>Code signing policy</h2>
   <p>Free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a>. The application is pending; Windows releases will be signed once it is approved.</p>
