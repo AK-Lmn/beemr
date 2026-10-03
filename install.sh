@@ -27,6 +27,18 @@ case "$(uname -m)" in
   *) fail "unsupported CPU $(uname -m)" ;;
 esac
 
+echo "This installer will:"
+echo "  - download beemr for $os ($arch) from GitHub and verify its checksum"
+echo "  - install it to $INSTALL_DIR and add that folder to your PATH if needed"
+if [ "${BEEMR_NO_SERVICE:-}" = "1" ]; then
+  echo "  - name this device (no background service: BEEMR_NO_SERVICE=1)"
+else
+  echo "  - name this device and start the background service that receives"
+  echo "    messages, set to start when you log in"
+fi
+echo "Uninstall any time: curl -fsSL https://raw.githubusercontent.com/$REPO/main/uninstall.sh | sh"
+echo
+
 asset="beemr-$os-$arch"
 base="https://github.com/$REPO/releases/latest/download"
 tmp="$(mktemp -d)"

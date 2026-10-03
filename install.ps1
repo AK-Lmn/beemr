@@ -12,6 +12,14 @@ $InstallDir = if ($env:BEEMR_INSTALL_DIR) { $env:BEEMR_INSTALL_DIR } else { Join
 $Asset = 'beemr-windows-x86_64.exe'
 $Base = "https://github.com/$Repo/releases/latest/download"
 
+Write-Host 'This installer will:'
+Write-Host '  - download beemr for Windows from GitHub and verify its checksum'
+Write-Host "  - install it to $InstallDir and add that folder to your PATH"
+Write-Host '  - name this device and start the background service that receives'
+Write-Host '    messages, set to start when you sign in to Windows'
+Write-Host "Uninstall any time: irm https://raw.githubusercontent.com/$Repo/main/uninstall.ps1 | iex"
+Write-Host ''
+
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $Exe = Join-Path $InstallDir 'beemr.exe'
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) "beemr-$([guid]::NewGuid()).exe"
