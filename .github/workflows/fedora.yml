@@ -37,7 +37,7 @@ jobs:
       - name: Vendor crates for Fedora's architectures
         run: |
           cargo install cargo-vendor-filterer --locked
-          cargo vendor-filterer --locked \
+          cargo vendor-filterer \
             --platform=x86_64-unknown-linux-gnu \
             --platform=aarch64-unknown-linux-gnu \
             --platform=powerpc64le-unknown-linux-gnu \
