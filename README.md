@@ -62,10 +62,8 @@ Reply with: beemr reply <number> <message>
 
 ## Install
 
-One command. It downloads the right binary, verifies its checksum, names your
-device and starts the background service.
-
-**macOS and Linux**
+**macOS and any Linux.** One command downloads the right binary, verifies
+its checksum, names your device and starts the background service:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/osmanahmadxai/beemr/main/install.sh | sh
@@ -77,7 +75,43 @@ curl -fsSL https://raw.githubusercontent.com/osmanahmadxai/beemr/main/install.sh
 irm https://raw.githubusercontent.com/osmanahmadxai/beemr/main/install.ps1 | iex
 ```
 
-Nothing else is required: no Docker, no runtime, no account.
+### Package managers
+
+**Debian, Ubuntu, Mint, Pop!_OS**
+
+```sh
+curl -fsSL https://osmanahmadxai.github.io/beemr/beemr.gpg | sudo tee /usr/share/keyrings/beemr.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] https://osmanahmadxai.github.io/beemr/apt stable main" | sudo tee /etc/apt/sources.list.d/beemr.list
+sudo apt update && sudo apt install beemr
+```
+
+**Fedora, RHEL, Rocky, Alma**
+
+```sh
+sudo curl -fsSL https://osmanahmadxai.github.io/beemr/rpm/beemr.repo -o /etc/yum.repos.d/beemr.repo
+sudo dnf install beemr
+```
+
+**openSUSE**
+
+```sh
+sudo zypper addrepo https://osmanahmadxai.github.io/beemr/rpm/beemr.repo
+sudo zypper install beemr
+```
+
+| Platform | Command |
+|---|---|
+| Snap (any distro with snapd) | `sudo snap install beemr` |
+| Arch, Manjaro (AUR) | `yay -S beemr-bin` |
+| Homebrew (macOS, Linux) | `brew install osmanahmadxai/beemr/beemr` |
+| Scoop (Windows) | `scoop bucket add beemr https://github.com/osmanahmadxai/scoop-beemr` then `scoop install beemr` |
+| Alpine | `apk add --allow-untrusted beemr_*.apk` from [releases](https://github.com/osmanahmadxai/beemr/releases/latest) |
+| Anything else | static binaries on the [releases page](https://github.com/osmanahmadxai/beemr/releases/latest) |
+
+The APT and RPM repositories are signed with key
+`5B5C C4E3 B2D2 FD72 1EA8 ECC9 2FF3 31B1 D566 DAFA`, and updates arrive
+through your normal system updates. Nothing else is required: no Docker, no
+runtime, no account.
 
 ## Usage
 

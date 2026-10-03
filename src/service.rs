@@ -27,14 +27,28 @@ impl Launch {
     }
 }
 
+/// Whether beemr runs as a snap, where snapd manages the background service
+/// (the snap's `daemon` app starts automatically for every user).
+fn in_snap() -> bool {
+    std::env::var_os("SNAP").is_some()
+}
+
 /// Install autostart and start the service now.
 pub fn install(config: &Config) -> Result<String> {
+    if in_snap() {
+        return Ok("is managed by snap and starts automatically".into());
+    }
     let launch = Launch::current()?;
     platform::install(config, &launch)
 }
 
 /// Stop the service and remove autostart.
 pub fn uninstall(config: &Config) -> Result<()> {
+    if in_snap() {
+        bail!(
+            "the snap manages the background service; stop it with: snap stop --user beemr.daemon"
+        );
+    }
     platform::uninstall(config)
 }
 

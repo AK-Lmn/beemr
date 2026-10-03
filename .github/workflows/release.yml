@@ -1,12 +1,17 @@
 name: Release
 
-# Push a tag like v0.1.0 to build native binaries for every platform and publish them.
+# Push a tag like v0.2.0 to build native binaries and Linux packages, publish a
+# GitHub release, update the signed APT/RPM repositories on GitHub Pages,
+# publish the snap, and verify installation on many distributions.
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+
+env:
+  REPO_URL: https://osmanahmadxai.github.io/beemr
 
 jobs:
   build:
@@ -41,18 +46,249 @@ jobs:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
-  publish:
+  packages:
+    name: Linux packages
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: beemr-linux-*
+          merge-multiple: true
+          path: bin
+      - name: Install nfpm and rpm signing tools
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update && sudo apt-get install -y nfpm rpm
+      - name: Build deb, rpm, apk and Arch packages
+        run: |
+          export BEEMR_VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist out
+          for arch in amd64 arm64; do
+            case $arch in amd64) bin=bin/beemr-linux-x86_64 ;; arm64) bin=bin/beemr-linux-aarch64 ;; esac
+            install -m755 "$bin" dist/beemr
+            for packager in deb rpm apk archlinux; do
+              ARCH=$arch nfpm package --config packaging/nfpm.yaml --packager $packager --target out/
+            done
+          done
+          ls -l out
+      - name: Sign RPMs
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          rpmsign --define "_gpg_name $GPG_FINGERPRINT" --addsign out/*.rpm
+          rpm -qpi out/*.rpm | grep -i signature
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: out/*
+
+  release:
+    name: GitHub release
+    needs: [build, packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+          path: assets
       - name: Checksums
-        run: sha256sum beemr-* > SHA256SUMS
+        working-directory: assets
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            beemr-*
-            SHA256SUMS
+          files: assets/*
           generate_release_notes: true
+
+  repositories:
+    name: APT and RPM repositories
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: packages
+      - name: Install repository tools
+        run: sudo apt-get update && sudo apt-get install -y apt-utils createrepo-c
+      - name: Import signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+      - name: Check out the Pages branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git clone --depth 1 --branch gh-pages "$url" site; then
+            mkdir site && git -C site init -b gh-pages && git -C site remote add origin "$url"
+          fi
+      - name: Update the APT repository
+        env:
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+        working-directory: site
+        run: |
+          mkdir -p apt/pool/main/b/beemr
+          cp ../packages/*.deb apt/pool/main/b/beemr/
+          cd apt
+          for arch in amd64 arm64; do
+            mkdir -p dists/stable/main/binary-$arch
+            apt-ftparchive --arch $arch packages pool > dists/stable/main/binary-$arch/Packages
+            gzip -9kf dists/stable/main/binary-$arch/Packages
+          done
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin=beemr \
+            -o APT::FTPArchive::Release::Label=beemr \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Description="beemr packages" \
+            release dists/stable > dists/stable/Release
+          gpg --batch --yes --default-key "$GPG_FINGERPRINT" --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes --default-key "$GPG_FINGERPRINT" -abs -o dists/stable/Release.gpg dists/stable/Release
+      - name: Update the RPM repository
+        env:
+          GPG_FINGERPRINT: ${{ secrets.GPG_FINGERPRINT }}
+        working-directory: site
+        run: |
+          mkdir -p rpm
+          cp ../packages/*.rpm rpm/
+          createrepo_c --update rpm
+          gpg --batch --yes --default-key "$GPG_FINGERPRINT" --detach-sign --armor rpm/repodata/repomd.xml
+          cat > rpm/beemr.repo <<EOF
+          [beemr]
+          name=beemr
+          baseurl=${REPO_URL}/rpm
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=1
+          gpgkey=${REPO_URL}/beemr.asc
+          EOF
+      - name: Keys, installers and landing page
+        working-directory: site
+        run: |
+          cp ../packaging/beemr.asc beemr.asc
+          gpg --dearmor < beemr.asc > beemr.gpg
+          cp ../install.sh ../install.ps1 .
+          cp ../packaging/site/index.html index.html
+          touch .nojekyll
+      - name: Publish
+        working-directory: site
+        run: |
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Packages for ${GITHUB_REF_NAME}"
+          git push origin gh-pages
+
+  snap:
+    name: Snap
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: beemr-linux-*
+          merge-multiple: true
+          path: dist
+      - name: Build snaps
+        run: |
+          echo "${GITHUB_REF_NAME#v}" > dist/VERSION
+          sudo snap install snapcraft --classic
+          sudo snapcraft pack --destructive-mode --build-for amd64
+          sudo snapcraft clean --destructive-mode || true
+          sudo snapcraft pack --destructive-mode --build-for arm64
+          ls -l *.snap
+      - name: Attach snaps to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 1 30); do gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break; sleep 20; done
+          gh release upload "$GITHUB_REF_NAME" *.snap --clobber
+      - name: Publish to the Snap Store
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "::notice::Snap Store credentials not configured yet; snaps are attached to the release instead"
+            exit 0
+          fi
+          for snap in *.snap; do snapcraft upload --release=stable "$snap"; done
+
+  verify:
+    name: Install on ${{ matrix.distro }}
+    needs: repositories
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian:12
+            install: |
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+              curl -fsSL $REPO_URL/beemr.gpg -o /usr/share/keyrings/beemr.gpg
+              echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] $REPO_URL/apt stable main" > /etc/apt/sources.list.d/beemr.list
+              apt-get update -qq && apt-get install -y beemr
+          - distro: ubuntu:24.04
+            install: |
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+              curl -fsSL $REPO_URL/beemr.gpg -o /usr/share/keyrings/beemr.gpg
+              echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] $REPO_URL/apt stable main" > /etc/apt/sources.list.d/beemr.list
+              apt-get update -qq && apt-get install -y beemr
+          - distro: ubuntu:22.04
+            install: |
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+              curl -fsSL $REPO_URL/beemr.gpg -o /usr/share/keyrings/beemr.gpg
+              echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] $REPO_URL/apt stable main" > /etc/apt/sources.list.d/beemr.list
+              apt-get update -qq && apt-get install -y beemr
+          - distro: fedora:latest
+            install: |
+              curl -fsSL $REPO_URL/rpm/beemr.repo -o /etc/yum.repos.d/beemr.repo
+              dnf install -y beemr
+          - distro: rockylinux:9
+            install: |
+              curl -fsSL $REPO_URL/rpm/beemr.repo -o /etc/yum.repos.d/beemr.repo
+              dnf install -y beemr
+          - distro: opensuse/tumbleweed
+            install: |
+              zypper --non-interactive --gpg-auto-import-keys addrepo $REPO_URL/rpm/beemr.repo
+              zypper --non-interactive --gpg-auto-import-keys install beemr
+          - distro: alpine:latest
+            install: |
+              apk add -q curl
+              curl -fsSL -o /tmp/beemr.apk "$(curl -fsSL https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME | grep -o "https://[^\"]*x86_64\.apk" | head -1)"
+              apk add --allow-untrusted /tmp/beemr.apk
+          - distro: archlinux:latest
+            install: |
+              curl -fsSL -o /tmp/beemr.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME | grep -o "https://[^\"]*x86_64\.pkg\.tar\.zst" | head -1)"
+              pacman -U --noconfirm /tmp/beemr.pkg.tar.zst
+          - distro: almalinux:9
+            install: |
+              curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | BEEMR_NO_SERVICE=1 sh
+              ln -sf /root/.local/bin/beemr /usr/local/bin/beemr
+    steps:
+      - name: Wait for GitHub Pages to serve this release
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 1 40); do
+            curl -fsSL "$REPO_URL/apt/dists/stable/main/binary-amd64/Packages" | grep -q "Version: $version" && exit 0
+            sleep 15
+          done
+          echo "::error::the APT repository never served version $version"; exit 1
+      - name: Install and run
+        run: |
+          cat > install.sh <<'SCRIPT'
+          set -e
+          command -v curl >/dev/null || { (dnf install -y -q curl || zypper -n in curl || pacman -Sy --noconfirm curl) >/dev/null 2>&1; }
+          ${{ matrix.install }}
+          beemr --version
+          beemr --version | grep -q "${GITHUB_REF_NAME#v}"
+          BEEMR_HOME=/tmp/b beemr setup --name "CI test" --no-service
+          SCRIPT
+          docker run --rm -e REPO_URL -e GITHUB_REPOSITORY -e GITHUB_REF_NAME \
+            -v "$PWD/install.sh:/install.sh:ro" ${{ matrix.distro }} sh /install.sh

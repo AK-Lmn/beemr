@@ -1,0 +1,29 @@
+# Linux packages (deb, rpm, apk, archlinux) built from the static release
+# binaries by the release workflow:  BEEMR_VERSION=0.2.0 ARCH=amd64 nfpm pkg ...
+name: beemr
+arch: ${ARCH}
+platform: linux
+version: ${BEEMR_VERSION}
+release: 1
+section: net
+priority: optional
+maintainer: Osman Ahmadzai <osmanahmadxai@gmail.com>
+vendor: beemr
+homepage: https://github.com/osmanahmadxai/beemr
+license: MIT
+description: |
+  Peer-to-peer file and message sharing.
+  Send files and messages straight to another device: no servers, no
+  accounts, no setup. Connects directly, punches through NATs, and falls
+  back to relaying through other beemr devices. End-to-end encrypted.
+contents:
+  - src: ./dist/beemr
+    dst: /usr/bin/beemr
+    file_info:
+      mode: 0755
+  - src: ./LICENSE
+    dst: /usr/share/licenses/beemr/LICENSE
+  - src: ./README.md
+    dst: /usr/share/doc/beemr/README.md
+  - src: ./PROTOCOL.md
+    dst: /usr/share/doc/beemr/PROTOCOL.md

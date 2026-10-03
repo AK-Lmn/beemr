@@ -1,0 +1,58 @@
+name: beemr
+base: core24
+adopt-info: beemr
+summary: Peer-to-peer file and message sharing
+description: |
+  Send files and messages straight to another device: no servers, no
+  accounts, no setup. beemr connects directly when it can, punches through
+  home and mobile NATs when it can't, and falls back to relaying through
+  other beemr devices. Everything is end-to-end encrypted.
+
+  beemr share photos/      # prints a command for the other device
+  beemr msg sara "hi"      # messages arrive in `beemr inbox`
+license: MIT
+website: https://github.com/osmanahmadxai/beemr
+source-code: https://github.com/osmanahmadxai/beemr
+issues: https://github.com/osmanahmadxai/beemr/issues
+grade: stable
+confinement: strict
+
+# Both snaps package prebuilt static binaries, so both build on amd64.
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+  arm64:
+    build-on: [amd64]
+    build-for: [arm64]
+
+apps:
+  beemr:
+    command: bin/beemr
+    environment:
+      # Keep identity, contacts and inbox across snap updates.
+      BEEMR_HOME: $SNAP_USER_COMMON
+    plugs: [network, network-bind, home, removable-media]
+  # Receives messages in the background for every logged-in user.
+  daemon:
+    command: bin/beemr daemon run
+    daemon: simple
+    daemon-scope: user
+    restart-condition: always
+    environment:
+      BEEMR_HOME: $SNAP_USER_COMMON
+    plugs: [network, network-bind]
+
+parts:
+  beemr:
+    # The release workflow puts the static binaries in dist/ before building.
+    plugin: nil
+    source: .
+    override-build: |
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64) arch=x86_64 ;;
+        arm64) arch=aarch64 ;;
+        *) echo "unsupported architecture $CRAFT_ARCH_BUILD_FOR"; exit 1 ;;
+      esac
+      install -Dm755 "dist/beemr-linux-$arch" "$CRAFT_PART_INSTALL/bin/beemr"
+      craftctl set version="$(cat dist/VERSION)"

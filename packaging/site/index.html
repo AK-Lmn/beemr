@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>beemr</title>
+<meta name="description" content="Peer-to-peer file and message sharing. No servers, no accounts, no setup. End-to-end encrypted.">
+<style>
+  :root { --bg: #ffffff; --fg: #16181d; --muted: #5d6470; --card: #f4f5f7; --border: #e2e4e8; --accent: #4b5cf0; --code: #0f1115; --codefg: #e8eaf0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1014; --fg: #e9ebef; --muted: #9aa1ad; --card: #171a20; --border: #262a33; --accent: #8a96ff; --code: #07080a; --codefg: #e8eaf0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 16px 80px; }
+  h1 { font-size: 44px; margin: 0; letter-spacing: -0.02em; }
+  .tag { color: var(--muted); font-size: 19px; margin: 8px 0 32px; }
+  h2 { font-size: 20px; margin: 40px 0 12px; }
+  h3 { font-size: 15px; margin: 22px 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  pre { background: var(--code); color: var(--codefg); padding: 14px 16px; border-radius: 10px; overflow-x: auto; margin: 0; font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  ul { padding-left: 20px; } li { margin: 4px 0; }
+  a { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card b { display: block; margin-bottom: 2px; }
+  .card span { color: var(--muted); font-size: 14px; }
+  footer { margin-top: 56px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>beemr</h1>
+  <p class="tag">Peer-to-peer file and message sharing. No servers, no accounts, no setup. End-to-end encrypted.</p>
+
+<pre>$ beemr share photos/
+On the other device, run:
+
+    beemr get AlTRKOzvjlzG…
+
+$ beemr msg sara "landed! call you later"
+Delivered (direct connection).</pre>
+
+  <div class="grid">
+    <div class="card"><b>Zero configuration</b><span>Direct connections, NAT hole punching, and relays through other beemr devices.</span></div>
+    <div class="card"><b>No servers</b><span>Devices find each other on the BitTorrent DHT and connect peer to peer.</span></div>
+    <div class="card"><b>Private</b><span>End-to-end encrypted, device identities, share with one device only.</span></div>
+  </div>
+
+  <h2>Install</h2>
+
+  <h3>macOS and any Linux</h3>
+<pre>curl -fsSL https://raw.githubusercontent.com/osmanahmadxai/beemr/main/install.sh | sh</pre>
+
+  <h3>Windows (PowerShell)</h3>
+<pre>irm https://raw.githubusercontent.com/osmanahmadxai/beemr/main/install.ps1 | iex</pre>
+
+  <h3>Debian, Ubuntu, Mint, Pop!_OS (apt)</h3>
+<pre>curl -fsSL https://osmanahmadxai.github.io/beemr/beemr.gpg | sudo tee /usr/share/keyrings/beemr.gpg &gt;/dev/null
+echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] https://osmanahmadxai.github.io/beemr/apt stable main" | sudo tee /etc/apt/sources.list.d/beemr.list
+sudo apt update &amp;&amp; sudo apt install beemr</pre>
+
+  <h3>Fedora, RHEL, Rocky, Alma (dnf)</h3>
+<pre>sudo curl -fsSL https://osmanahmadxai.github.io/beemr/rpm/beemr.repo -o /etc/yum.repos.d/beemr.repo
+sudo dnf install beemr</pre>
+
+  <h3>openSUSE (zypper)</h3>
+<pre>sudo zypper addrepo https://osmanahmadxai.github.io/beemr/rpm/beemr.repo
+sudo zypper install beemr</pre>
+
+  <h3>Snap (any distro with snapd)</h3>
+<pre>sudo snap install beemr</pre>
+
+  <h3>Arch, Manjaro (AUR)</h3>
+<pre>yay -S beemr-bin</pre>
+
+  <h3>Homebrew (macOS and Linux)</h3>
+<pre>brew install osmanahmadxai/beemr/beemr</pre>
+
+  <h3>Scoop (Windows)</h3>
+<pre>scoop bucket add beemr https://github.com/osmanahmadxai/scoop-beemr
+scoop install beemr</pre>
+
+  <p>Alpine (<code>.apk</code>), Arch (<code>.pkg.tar.zst</code>), <code>.deb</code>, <code>.rpm</code> and plain binaries are on the
+  <a href="https://github.com/osmanahmadxai/beemr/releases/latest">releases page</a>.
+  Packages are signed with key <code>5B5C C4E3 B2D2 FD72 1EA8 ECC9 2FF3 31B1 D566 DAFA</code> (<a href="beemr.asc">beemr.asc</a>).</p>
+
+  <footer>
+    <a href="https://github.com/osmanahmadxai/beemr">Source on GitHub</a> ·
+    <a href="https://github.com/osmanahmadxai/beemr/blob/main/PROTOCOL.md">Protocol</a> · MIT license
+  </footer>
+</main>
+</body>
+</html>
