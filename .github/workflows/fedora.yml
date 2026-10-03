@@ -59,7 +59,7 @@ jobs:
     container: fedora:latest
     steps:
       - name: Install packaging tools
-        run: dnf install -y -q rpm-build rpmdevtools rpmlint cargo-rpm-macros rust cargo git-core
+        run: dnf install -y -q rpm-build rpmdevtools rpmlint cargo-rpm-macros rust cargo git-core gh
       - uses: actions/checkout@v5
       - name: Fetch sources
         run: |
@@ -80,6 +80,13 @@ jobs:
       - name: rpmlint
         run: |
           rpmlint packaging/fedora/beemr.spec ~/rpmbuild/SRPMS/*.src.rpm ~/rpmbuild/RPMS/*/*.rpm | tee rpmlint.txt
+      - name: Attach the source package and spec to the release (for package review)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          cp packaging/fedora/beemr.spec beemr.spec
+          gh release upload "$TAG" ~/rpmbuild/SRPMS/*.src.rpm beemr.spec --clobber
       - uses: actions/upload-artifact@v4
         if: always()
         with:

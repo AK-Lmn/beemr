@@ -65,6 +65,7 @@ jobs:
         run: |
           export BEEMR_VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist out
+          gzip -9n -c docs/beemr.1 > dist/beemr.1.gz
           for arch in amd64 arm64; do
             case $arch in amd64) bin=bin/beemr-linux-x86_64 ;; arm64) bin=bin/beemr-linux-aarch64 ;; esac
             install -m755 "$bin" dist/beemr
@@ -219,6 +220,13 @@ jobs:
             exit 0
           fi
           for snap in *.snap; do snapcraft upload --release=stable "$snap"; done
+
+  fedora:
+    name: Fedora package
+    needs: release
+    uses: ./.github/workflows/fedora.yml
+    with:
+      version: ${{ github.ref_name }}
 
   verify:
     name: Verify installation

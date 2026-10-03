@@ -3,14 +3,56 @@
 # %%cargo_vendor_manifest.
 
 Name:           beemr
-Version:        0.2.1
+Version:        0.2.2
 Release:        1%{?dist}
 Summary:        Peer-to-peer file and message sharing
 
 SourceLicense:  MIT
-# The project is MIT. Bundled Rust crates contribute additional license terms;
-# rebuild and check the output of %%{cargo_license_summary} when updating.
-License:        MIT
+# Licenses of the bundled Rust crates, from %%{cargo_license_summary}:
+# (MIT OR Apache-2.0) AND Apache-2.0
+# (MIT OR Apache-2.0) AND Unicode-3.0
+# Apache-2.0
+# Apache-2.0 AND ISC
+# Apache-2.0 OR ISC OR MIT
+# Apache-2.0 OR MIT
+# Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+# BSD-2-Clause OR MIT
+# BSD-3-Clause
+# ISC
+# ISC AND (Apache-2.0 OR ISC)
+# ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)
+# MIT
+# MIT OR Apache-2.0
+# MIT OR Apache-2.0 OR BSD-1-Clause
+# MIT OR Apache-2.0 OR LGPL-2.1-or-later
+# MIT OR Apache-2.0 OR Zlib
+# MIT OR BSD-3-Clause
+# MPL-2.0
+# Unicode-3.0
+# Unlicense OR MIT
+# Zlib
+# Zlib OR Apache-2.0 OR MIT
+License:        %{shrink:
+    MIT AND
+    Apache-2.0 AND
+    BSD-3-Clause AND
+    ISC AND
+    MPL-2.0 AND
+    Unicode-3.0 AND
+    Zlib AND
+    (Apache-2.0 OR ISC OR MIT) AND
+    (Apache-2.0 OR ISC OR MIT-0) AND
+    (Apache-2.0 OR MIT) AND
+    (Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT) AND
+    (BSD-2-Clause OR MIT) AND
+    (MIT OR Apache-2.0 OR BSD-1-Clause) AND
+    (MIT OR Apache-2.0 OR LGPL-2.1-or-later) AND
+    (MIT OR Apache-2.0 OR Zlib) AND
+    (MIT OR BSD-3-Clause) AND
+    (Unlicense OR MIT) AND
+    (Zlib OR Apache-2.0 OR MIT)
+}
+# LICENSE.dependencies contains the full per-crate license breakdown.
 URL:            https://github.com/osmanahmadxai/beemr
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Source1:        %{url}/releases/download/v%{version}/%{name}-%{version}-vendor.tar.xz
@@ -38,6 +80,7 @@ traffic is end-to-end encrypted.}
 
 %install
 install -Dpm 0755 target/rpm/%{name} %{buildroot}%{_bindir}/%{name}
+install -Dpm 0644 docs/%{name}.1 %{buildroot}%{_mandir}/man1/%{name}.1
 
 %check
 # Unit tests only: the end-to-end tests start several network services and
@@ -48,7 +91,8 @@ install -Dpm 0755 target/rpm/%{name} %{buildroot}%{_bindir}/%{name}
 %license LICENSE LICENSE.dependencies cargo-vendor.txt
 %doc README.md PROTOCOL.md
 %{_bindir}/%{name}
+%{_mandir}/man1/%{name}.1*
 
 %changelog
-* Sat Oct 03 2026 Osman Ahmadzai <osmanahmadxai@gmail.com> - 0.2.1-1
+* Sat Oct 03 2026 Osman Ahmadzai <osmanahmadxai@gmail.com> - 0.2.2-1
 - Initial package
