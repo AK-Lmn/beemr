@@ -118,6 +118,19 @@ The APT and RPM repositories are signed with key
 through your normal system updates. Nothing else is required: no Docker, no
 runtime, no account.
 
+## Uninstall
+
+| Installed with | Remove with |
+|---|---|
+| macOS / Linux installer | `curl -fsSL https://raw.githubusercontent.com/osmanahmadxai/beemr/main/uninstall.sh \| sh` |
+| Windows installer | `irm https://raw.githubusercontent.com/osmanahmadxai/beemr/main/uninstall.ps1 \| iex` |
+| apt / dnf / zypper | `sudo apt remove beemr` · `sudo dnf remove beemr` · `sudo zypper remove beemr` |
+| Snap / Homebrew / Scoop | `sudo snap remove beemr` · `brew uninstall beemr` · `scoop uninstall beemr` |
+
+Run `beemr daemon uninstall` first to stop the background service. The
+uninstall scripts do this for you. Your identity, contacts and inbox are kept
+unless you set `BEEMR_PURGE=1` when running an uninstall script.
+
 ## Usage
 
 ### Files
@@ -198,6 +211,28 @@ beemr stores its identity, contacts and inbox in `~/.config/beemr/`
 `%APPDATA%\beemr\` (Windows). Set `BEEMR_HOME` to use another folder.
 
 The wire format is specified in [PROTOCOL.md](PROTOCOL.md).
+
+## Privacy policy
+
+beemr has no telemetry and sends nothing to the project or its maintainers.
+To let other devices reach you, it publishes a signed record with this
+device's ID, its chosen name and its current network addresses on the public
+BitTorrent DHT. It also connects to public IPFS nodes to find relays for hole
+punching. Files and messages travel only between the devices involved,
+end-to-end encrypted. Your identity, contacts and messages are stored only on
+your device.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/). The application
+is pending; Windows releases will be signed once it is approved.
+
+- Committers and reviewers: [Osman Ahmadzai](https://github.com/osmanahmadxai)
+- Approvers: [Osman Ahmadzai](https://github.com/osmanahmadxai)
+
+Every signed release is built by GitHub Actions from this repository's public
+source and approved by hand before signing.
 
 ## Building from source
 

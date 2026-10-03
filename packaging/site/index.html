@@ -93,6 +93,21 @@ scoop install beemr</pre>
   <a href="https://github.com/osmanahmadxai/beemr/releases/latest">releases page</a>.
   Packages are signed with key <code>5B5C C4E3 B2D2 FD72 1EA8 ECC9 2FF3 31B1 D566 DAFA</code> (<a href="beemr.asc">beemr.asc</a>).</p>
 
+  <h2>Uninstall</h2>
+<pre>curl -fsSL https://raw.githubusercontent.com/osmanahmadxai/beemr/main/uninstall.sh | sh</pre>
+  <p>Windows: <code>irm https://raw.githubusercontent.com/osmanahmadxai/beemr/main/uninstall.ps1 | iex</code>. Package managers: <code>apt remove</code>, <code>dnf remove</code>, <code>snap remove</code>, <code>brew uninstall</code> or <code>scoop uninstall</code> <code>beemr</code>.</p>
+
+  <h2>Privacy policy</h2>
+  <p>beemr has no telemetry and sends nothing to the project or its maintainers. To let other devices reach you, it publishes a signed record with this device's ID, its chosen name and its current network addresses on the public BitTorrent DHT, and connects to public IPFS nodes to find relays. Files and messages travel only between the devices involved, end-to-end encrypted. Your identity, contacts and messages are stored only on your device.</p>
+
+  <h2>Code signing policy</h2>
+  <p>Free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a>. The application is pending; Windows releases will be signed once it is approved.</p>
+  <ul>
+    <li>Committers and reviewers: <a href="https://github.com/osmanahmadxai">Osman Ahmadzai</a></li>
+    <li>Approvers: <a href="https://github.com/osmanahmadxai">Osman Ahmadzai</a></li>
+  </ul>
+  <p>Every signed release is built by GitHub Actions from the public source and approved by hand before signing.</p>
+
   <footer>
     <a href="https://github.com/osmanahmadxai/beemr">Source on GitHub</a> ·
     <a href="https://github.com/osmanahmadxai/beemr/blob/main/PROTOCOL.md">Protocol</a> · MIT license

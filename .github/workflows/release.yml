@@ -175,7 +175,7 @@ jobs:
         run: |
           cp ../packaging/beemr.asc beemr.asc
           gpg --dearmor < beemr.asc > beemr.gpg
-          cp ../install.sh ../install.ps1 .
+          cp ../install.sh ../install.ps1 ../uninstall.sh ../uninstall.ps1 .
           cp ../packaging/site/index.html index.html
           cp ../docs/beemr-logo.png beemr-logo.png
           cp ../snap/gui/beemr.png icon.png
