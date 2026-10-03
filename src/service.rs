@@ -18,11 +18,33 @@ pub fn remove_legacy(config: &Config) -> Result<()> {
                 std::fs::remove_file(&path).context(path.display())?;
             }
         }
-        let _ = run("pkill", &["-f", "beemr daemon run"]);
+        stop_old_services();
         return Ok(());
     }
     platform::uninstall(config)
 }
+
+/// Stop old `beemr daemon run` processes, but never this process: it may
+/// itself have been started as `beemr daemon run` by an old autostart entry.
+#[cfg(unix)]
+fn stop_old_services() {
+    let Ok(output) = Command::new("pgrep")
+        .args(["-f", "beemr daemon run"])
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return;
+    };
+    let me = std::process::id().to_string();
+    for pid in String::from_utf8_lossy(&output.stdout).split_whitespace() {
+        if pid != me {
+            let _ = run("kill", &[pid]);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn stop_old_services() {}
 
 fn run(program: &str, args: &[&str]) -> Result<()> {
     let status = Command::new(program)
@@ -85,7 +107,7 @@ mod platform {
             }
         }
         let _ = run("systemctl", &["--user", "daemon-reload"]);
-        let _ = run("pkill", &["-f", "beemr daemon run"]);
+        stop_old_services();
         Ok(())
     }
 }
