@@ -46,6 +46,8 @@ pub struct ShareOptions {
     pub upnp: bool,
     /// Relay for other beemr devices while sharing, when reachable.
     pub relay_for_others: bool,
+    /// Copy the `beemr get <ticket>` command to the system clipboard.
+    pub copy: bool,
 }
 
 /// Why sharing stopped.
@@ -99,9 +101,14 @@ pub async fn run(options: ShareOptions, profile: Profile) -> Result<Outcome> {
         changed: Notify::new(),
     });
     print_policy(&share, options.expires_in);
+    let command = format!("beemr get {}", ticket.encode());
     eprintln!("\nOn the other device, run:\n");
-    println!("    beemr get {}", ticket.encode());
+    println!("    {command}");
     eprintln!();
+
+    if options.copy {
+        copy_to_clipboard(&command);
+    }
 
     let (onion_tx, onion_rx) = watch::channel(None);
     if let Some(dht) = &dht {
@@ -882,4 +889,75 @@ async fn with_timeout<T>(future: impl std::future::Future<Output = Result<T>>) -
     tokio::time::timeout(TRANSFER_TIMEOUT, future)
         .await
         .map_err(|_| Error::new("the other device stopped responding"))?
+}
+
+fn copy_to_clipboard(text: &str) {
+    if let Err(e) = try_copy_to_clipboard(text) {
+        eprintln!("Note: Could not copy ticket to clipboard: {e}");
+    }
+}
+
+fn try_copy_to_clipboard(text: &str) -> std::result::Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        run_clipboard_cmd("clip.exe", &[], text)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        run_clipboard_cmd("pbcopy", &[], text)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let tools: &[(&str, &[&str])] = &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ];
+
+        let mut errors = Vec::new();
+        for (cmd, args) in tools {
+            match run_clipboard_cmd(cmd, args, text) {
+                Ok(()) => return Ok(()),
+                Err(e) => errors.push(format!("{cmd}: {e}")),
+            }
+        }
+        Err(format!("no working clipboard command found ({})", errors.join(", ")))
+    }
+}
+
+fn run_clipboard_cmd(cmd: &str, args: &[&str], text: &str) -> std::result::Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let err = err.trim();
+        if err.is_empty() {
+            Err(format!("command exited with {}", output.status))
+        } else {
+            Err(err.to_string())
+        }
+    }
 }

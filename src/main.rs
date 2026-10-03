@@ -128,6 +128,7 @@ async fn share(args: &[String]) -> Result<()> {
         port: 0,
         upnp: true,
         relay_for_others: true,
+        copy: false,
     };
     let mut path = None;
     let mut args = args.iter();
@@ -153,6 +154,7 @@ async fn share(args: &[String]) -> Result<()> {
             "-p" | "--port" => options.port = parse_port(value(&mut args, arg)?)?,
             "--no-port-mapping" | "--no-upnp" => options.upnp = false,
             "--no-relay" => options.relay_for_others = false,
+            "--copy" => options.copy = true,
             flag if flag.starts_with('-') && flag.len() > 1 => {
                 return Err(Error::new(format!("unknown option {flag}")))
             }
