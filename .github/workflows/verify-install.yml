@@ -1,0 +1,96 @@
+name: Verify installation
+
+# Installs a released version through each distribution's package manager
+# (and the universal installer) in clean containers, then runs it.
+# Called by the release workflow; can also be run by hand for any version.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release tag, e.g. v0.2.0
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag, e.g. v0.2.0
+        required: true
+        type: string
+
+env:
+  REPO_URL: https://osmanahmadxai.github.io/beemr
+  VERSION_TAG: ${{ inputs.version }}
+
+jobs:
+  install:
+    name: Install on ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian:12
+            install: |
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+              curl -fsSL $REPO_URL/beemr.gpg -o /usr/share/keyrings/beemr.gpg
+              echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] $REPO_URL/apt stable main" > /etc/apt/sources.list.d/beemr.list
+              apt-get update -qq && apt-get install -y beemr
+          - distro: ubuntu:24.04
+            install: |
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+              curl -fsSL $REPO_URL/beemr.gpg -o /usr/share/keyrings/beemr.gpg
+              echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] $REPO_URL/apt stable main" > /etc/apt/sources.list.d/beemr.list
+              apt-get update -qq && apt-get install -y beemr
+          - distro: ubuntu:22.04
+            install: |
+              apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null
+              curl -fsSL $REPO_URL/beemr.gpg -o /usr/share/keyrings/beemr.gpg
+              echo "deb [signed-by=/usr/share/keyrings/beemr.gpg] $REPO_URL/apt stable main" > /etc/apt/sources.list.d/beemr.list
+              apt-get update -qq && apt-get install -y beemr
+          - distro: fedora:latest
+            install: |
+              curl -fsSL $REPO_URL/rpm/beemr.repo -o /etc/yum.repos.d/beemr.repo
+              dnf install -y beemr
+          - distro: rockylinux:9
+            install: |
+              curl -fsSL $REPO_URL/rpm/beemr.repo -o /etc/yum.repos.d/beemr.repo
+              dnf install -y beemr
+          - distro: opensuse/tumbleweed
+            install: |
+              zypper --non-interactive --gpg-auto-import-keys addrepo $REPO_URL/rpm/beemr.repo
+              zypper --non-interactive --gpg-auto-import-keys install beemr
+          - distro: alpine:latest
+            install: |
+              apk add -q curl
+              curl -fsSL -o /tmp/beemr.apk "$(curl -fsSL https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$VERSION_TAG | grep -o "https://[^\"]*x86_64\.apk" | head -1)"
+              apk add --allow-untrusted /tmp/beemr.apk
+          - distro: archlinux:latest
+            install: |
+              curl -fsSL -o /tmp/beemr.pkg.tar.zst "$(curl -fsSL https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$VERSION_TAG | grep -o "https://[^\"]*x86_64\.pkg\.tar\.zst" | head -1)"
+              pacman -U --noconfirm /tmp/beemr.pkg.tar.zst
+          - distro: almalinux:9
+            install: |
+              curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | BEEMR_NO_SERVICE=1 sh
+              ln -sf /root/.local/bin/beemr /usr/local/bin/beemr
+    steps:
+      - name: Wait for GitHub Pages to serve this release
+        run: |
+          version="${VERSION_TAG#v}"
+          for _ in $(seq 1 40); do
+            curl -fsSL "$REPO_URL/apt/dists/stable/main/binary-amd64/Packages" | grep -q "Version: $version" && exit 0
+            sleep 15
+          done
+          echo "::error::the APT repository never served version $version"; exit 1
+      - name: Install and run
+        run: |
+          cat > install.sh <<'SCRIPT'
+          set -e
+          # Make sure curl exists; each distribution's steps below may also install it.
+          command -v curl >/dev/null || (dnf install -y -q curl || zypper -n in curl || pacman -Sy --noconfirm curl) >/dev/null 2>&1 || true
+          ${{ matrix.install }}
+          beemr --version
+          beemr --version | grep -q "${VERSION_TAG#v}"
+          BEEMR_HOME=/tmp/b beemr setup --name "CI test" --no-service
+          SCRIPT
+          docker run --rm -e REPO_URL -e GITHUB_REPOSITORY -e VERSION_TAG \
+            -v "$PWD/install.sh:/install.sh:ro" ${{ matrix.distro }} sh /install.sh
