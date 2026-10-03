@@ -119,6 +119,19 @@ pub async fn run(profile: Profile) -> Result<()> {
             "none found (only needed when hole punching fails)".to_string()
         },
     );
+    // Mirrors when `beemr share` prepares Tor (see share.rs).
+    let needs_tor = !status.directly_reachable()
+        && full == 0
+        && matches!(status.nat, NatKind::Symmetric | NatKind::Unknown);
+    println!(
+        "  {:<17} {}",
+        "Tor fallback",
+        if needs_tor {
+            "would be prepared when sharing (this network is hard to reach)"
+        } else {
+            "not needed on this network"
+        }
+    );
     println!();
     let verdict = if status.directly_reachable() {
         "Excellent: other devices can always reach this one."

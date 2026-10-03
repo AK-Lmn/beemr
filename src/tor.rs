@@ -60,7 +60,10 @@ impl Tor {
         config.storage().permissions().dangerously_trust_everyone();
         let config = config.build().map_err(tor_error)?;
         let tor = Tor {
-            client: TorClient::builder().config(config).create_unbootstrapped().map_err(tor_error)?,
+            client: TorClient::builder()
+                .config(config)
+                .create_unbootstrapped()
+                .map_err(tor_error)?,
             state_dir,
         };
         tor.client.bootstrap().await.map_err(tor_error)?;
@@ -166,9 +169,7 @@ fn to_multiaddr(id: &HsId) -> Multiaddr {
     let decoded = data_encoding::BASE32_NOPAD
         .decode(name.as_bytes())
         .expect("arti produces valid onion addresses");
-    let hash: [u8; 35] = decoded
-        .try_into()
-        .expect("v3 onion addresses are 35 bytes");
+    let hash: [u8; 35] = decoded.try_into().expect("v3 onion addresses are 35 bytes");
     Multiaddr::empty().with(Protocol::Onion3(Onion3Addr::from((hash, PORT))))
 }
 

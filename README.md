@@ -54,23 +54,24 @@ On the other device, run:
 ```console
 $ beemr get AlTRKOzvjlzG5IBDDhhzcwj56mci3evFmCm22FhZ8NVAOe29ocweZCkDP1kmbFeakaMFBMCoARc
 Receiving "vacation-photos" (214 files, 1.3 GB) from Osman
-  via direct connection (through the firewall via hole punching)
+  How: direct connection, punched through both firewalls (hole punching)
   Receiving [========================] 100.0%  1.3 GB / 1.3 GB  48.2 MB/s
 Saved to ./vacation-photos
 ```
 
-That's it. The files go straight from one device to the other.
+That's it. The files go straight from one device to the other, and both sides
+say exactly how they're travelling (see [How it connects](#how-it-connects)).
 
 ## Why beemr
 
 | | |
 |---|---|
-| 🌍 **Works across the internet** | Connects directly, punches through home and mobile NATs, and falls back to a relay only when it has to. No router setup. |
+| 🌍 **Works across the internet** | Connects directly, opens router ports, punches through home and mobile NATs, and only relays when nothing else works: through another beemr user, or Tor. No router setup. |
 | 🚫 **No servers, no accounts** | Devices find each other on the public BitTorrent DHT. Nothing is uploaded anywhere. |
 | 🔒 **End-to-end encrypted** | Every byte is encrypted between the two devices, even through a relay. |
 | 🪪 **Share with one device only** | Every device has a cryptographic ID. `--to sara` means only Sara's device can download. |
 | ⏱️ **Limits built in** | One download by default. Allow more with `-n 5`, or expire with `-e 10m`. |
-| 🪶 **Small and quiet** | One ~9 MB native binary for macOS, Linux and Windows. Nothing runs in the background. |
+| 🪶 **Small and quiet** | One ~18 MB native binary for macOS, Linux and Windows. Nothing runs in the background. |
 
 ## How beemr compares
 
@@ -160,7 +161,8 @@ beemr get <ticket> -o ~/Downloads      # download into a specific folder
 | `-n`, `--downloads <n>` | Number of downloads allowed. Default `1`; `0` means unlimited. |
 | `-e`, `--expires <time>` | Stop accepting downloads after a time such as `30s`, `10m`, `2h` or `1d`. |
 | `-p`, `--port <port>` | Listen on a specific port instead of a random one. |
-| `--no-upnp` | Don't ask your router to open a port. |
+| `--no-port-mapping` | Don't ask your router to open a port (UPnP, PCP, NAT-PMP). |
+| `--no-relay` | Don't relay for other beemr users while sharing (see [How it connects](#how-it-connects)). |
 
 ### Your device and contacts
 
@@ -178,26 +180,52 @@ self-chosen name as unverified.
 
 ## How it connects
 
-beemr tries every path at once and keeps the best one:
+beemr picks the fastest path that works on your networks, automatically. It
+tries them in parallel and keeps the best one:
 
-| Step | What happens | Setup needed |
+| | Path | When it's used |
 |---|---|---|
-| **1. Direct** | Same network, IPv6, or a port your router opens via UPnP | None |
-| **2. Hole punching** | Both devices connect at the same moment through their firewalls, coordinated by public peer-to-peer nodes | None |
-| **3. Relay** | A beemr relay that's reachable from the internet forwards the encrypted data | A relay online (see below) |
+| 1 | **Direct**, over the local network or IPv6 | Same Wi-Fi/LAN, or both devices have IPv6 |
+| 2 | **Direct, through a port your router opens** | The router supports UPnP, PCP or NAT-PMP (most home routers) |
+| 3 | **Hole punching** | Both devices connect at the same moment through their firewalls, coordinated by public peer-to-peer nodes. Works on most home and mobile networks. |
+| 4 | **Port prediction** | One device is behind a strict (symmetric) NAT, which defeats normal hole punching: beemr opens many ports at once and finds the one that gets through |
+| 5 | **Relay** | Both devices are behind strict NATs. Another beemr user's reachable computer, or a relay you run, forwards the encrypted data. |
+| 6 | **Tor** | Nothing else works and no relay is online. Slowest, but it gets through any firewall that allows outgoing connections. |
 
-Hole punching works on most home and mobile networks. If **both** devices
-sit behind the strictest kind of NAT (symmetric NAT, used by some mobile
-carriers), a reachable third machine has to forward the traffic. No app can
-avoid that. With beemr, that machine is a relay anyone can run, never a
-company server. Any computer that's reachable from the internet can be one: a
-router with UPnP, IPv6, a public IP, or a small cloud server.
+Both sides always say which path a transfer took:
+
+```text
+How: direct connection, same Wi-Fi/LAN (fastest; never leaves your network)
+How: direct connection over the internet via IPv6
+How: direct connection through the router (port opened automatically with PCP)
+How: direct connection, punched through both firewalls (hole punching)
+How: direct connection, punched through a strict firewall (port prediction)
+How: relayed through beemr relay 203.0.113.5 (slower; end-to-end encrypted, the relay can't read it)
+How: relayed through Tor (slowest; end-to-end encrypted and anonymous)
+```
+
+**Users relay for each other.** While you share something from a computer
+that's reachable from the internet, beemr also relays for other beemr users
+who can't connect directly, and says so on screen. Their data is end-to-end
+encrypted, so your computer can't read it; relaying stops when your share
+does, and each connection is capped. Turn it off with `--no-relay`.
+
+**Tor is the last resort.** A sharer prepares a Tor onion service only when
+its network is hard to reach (a strict NAT and no relay available), and a
+receiver uses it only after every other path has failed. Each share gets a
+fresh onion address.
+
+You can also run a relay yourself on any computer that's reachable from the
+internet: a router with UPnP, IPv6, a public IP, or a small cloud server.
 
 ```sh
 beemr relay                  # run a relay for everyone (beemr devices find it automatically)
 beemr relay --private        # run a relay only for devices you configure
 beemr relay use <address>    # always try a specific relay
 ```
+
+`beemr doctor` shows what kind of network you're on and which paths are
+available from it.
 
 ## FAQ
 
@@ -239,9 +267,20 @@ device can download, even with the ticket.
 <details>
 <summary><b>It can't connect. What now?</b></summary>
 
-Run `beemr doctor` on both devices. It shows which connection paths work on
-each network. If both are behind strict NATs, run `beemr relay` on any machine
-that's reachable from the internet.
+Run `beemr doctor` on both devices. It shows each network's type and which
+connection paths work from it. beemr falls back to Tor automatically, so a
+transfer that fails completely usually means one device is offline or blocks
+all outgoing connections. For faster transfers between two strict networks,
+run `beemr relay` on any machine that's reachable from the internet.
+</details>
+
+<details>
+<summary><b>What does "Relaying for other beemr users" mean?</b></summary>
+
+Your computer is reachable from the internet, so while your share runs, it
+forwards end-to-end encrypted traffic for beemr users whose networks block
+direct connections. It can't read that traffic, and it stops when your share
+does. Use `beemr share --no-relay` to turn it off.
 </details>
 
 ## Uninstall
@@ -278,6 +317,14 @@ BitTorrent DHT, so the receiver can find it. It also connects to public IPFS
 nodes to find relays for hole punching. Files travel only between the devices
 involved, end-to-end encrypted. Your identity and contacts are stored only on
 your device.
+
+While sharing from a computer that's reachable from the internet, beemr
+relays end-to-end encrypted traffic for other beemr users (it can't read it),
+and announces itself as a relay on the DHT. `--no-relay` turns this off.
+When a network is hard to reach, beemr connects to the Tor network and may
+start a temporary onion service for the share; its address is in the share's
+signed DHT record. Tor's public directory data is cached in beemr's
+configuration folder.
 
 ### Code signing policy
 

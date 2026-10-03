@@ -525,8 +525,16 @@ impl Ladder<'_> {
         }
         let mut message =
             String::from("found the other device but couldn't connect to any of its addresses.");
+        message.push_str(
+            "\nBoth networks may block direct connections, with no beemr relay online.\n\
+             Run `beemr doctor` on both devices to see why.",
+        );
         if let Some(error) = self.errors.last() {
-            message.push_str(&format!("\nLast error: {error}"));
+            // libp2p's dial errors nest every address tried; the start is enough.
+            let short: String = error.chars().take(160).collect();
+            let more = if short.len() < error.len() { "…" } else { "" };
+            tracing::debug!(%error, "last dial error");
+            message.push_str(&format!("\nLast error: {short}{more}"));
         }
         Error::new(message)
     }

@@ -469,7 +469,10 @@ mod tests {
         }
     }
 
-    async fn run_handshake(alice_sees: Binding, bob_sees: Binding) -> (Result<PeerInfo>, Result<PeerInfo>) {
+    async fn run_handshake(
+        alice_sees: Binding,
+        bob_sees: Binding,
+    ) -> (Result<PeerInfo>, Result<PeerInfo>) {
         let (mut a, mut b) = pipe();
         let (alice, bob) = (Identity::generate(), Identity::generate());
         let responder = tokio::spawn(async move {
@@ -503,8 +506,14 @@ mod tests {
 
         // A Tor hello can't be replayed with another nonce.
         let (_, bob) = run_handshake(
-            Binding::Tor { onion: [7; 32], nonce: [1; 32] },
-            Binding::Tor { onion: [7; 32], nonce: [2; 32] },
+            Binding::Tor {
+                onion: [7; 32],
+                nonce: [1; 32],
+            },
+            Binding::Tor {
+                onion: [7; 32],
+                nonce: [2; 32],
+            },
         )
         .await;
         assert!(bob.is_err());
@@ -518,7 +527,10 @@ mod tests {
         assert!(download_proof_matches(&secret, &libp2p(a, b), &proof));
         assert!(!download_proof_matches(&secret, &libp2p(b, a), &proof));
         assert!(!download_proof_matches(&[2; 16], &libp2p(a, b), &proof));
-        let tor = |nonce| Binding::Tor { onion: [7; 32], nonce };
+        let tor = |nonce| Binding::Tor {
+            onion: [7; 32],
+            nonce,
+        };
         let proof = download_proof(&secret, &tor([1; 32]));
         assert!(!download_proof_matches(&secret, &tor([2; 32]), &proof));
     }
@@ -530,7 +542,12 @@ mod tests {
         let payload = hello_payload(Side::Responder, &libp2p(a, b));
         assert_eq!(
             payload,
-            [b"beemr/hello/responder".as_slice(), &b.to_bytes(), &a.to_bytes()].concat()
+            [
+                b"beemr/hello/responder".as_slice(),
+                &b.to_bytes(),
+                &a.to_bytes()
+            ]
+            .concat()
         );
     }
 }

@@ -643,6 +643,12 @@ impl Share {
             initiator: peer,
             responder: node.peer_id(),
         };
+        // The receiver closes its other connections to us just before opening
+        // this stream; let those closes arrive so we name the right path.
+        let started = Instant::now();
+        while node.connections_to(&peer).len() > 1 && started.elapsed() < Duration::from_secs(1) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         let path = self.path_to(node, &peer);
         self.serve(stream, binding, path).await;
     }

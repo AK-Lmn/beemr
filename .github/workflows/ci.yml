@@ -79,14 +79,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Hole punching and port prediction race packets through NATs and
-          # aren't guaranteed, so those scenarios require the transfer to
-          # succeed and report which path it took.
           - scenario: cone NAT, hole punching
             args: cone
             expect: success
-            path: ""
-            report: "punched through both firewalls"
+            path: "How: direct connection, punched through both firewalls"
+            report: ""
+          # Port prediction finds a path about 85% of the time by design, so
+          # this scenario requires the transfer and reports the path taken.
           - scenario: cone + symmetric NAT, port prediction
             args: mixed
             expect: success

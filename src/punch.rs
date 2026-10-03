@@ -130,6 +130,7 @@ pub async fn initiate(node: &Node, peer: PeerId) -> Result<Option<Node>> {
     write_frame(&mut stream, &mine.encode()).await?;
     let theirs = Info::decode(&read_frame(&mut stream).await?)?;
     let round_trip = sent.elapsed();
+    tracing::debug!(?mine, ?theirs, "port prediction");
     let role = roles(mine, theirs).ok_or_else(|| Error::new("port prediction not applicable"))?;
     write_frame(&mut stream, b"go").await?;
     // The other side starts when "go" arrives, half a round trip from now.
@@ -144,6 +145,7 @@ pub async fn respond(node: &Node, peer: PeerId, mut stream: Stream) -> Result<Op
     let theirs = Info::decode(&read_frame(&mut stream).await?)?;
     let mine = Info::local(node);
     write_frame(&mut stream, &mine.encode()).await?;
+    tracing::debug!(?mine, ?theirs, "port prediction");
     let role = roles(mine, theirs).ok_or_else(|| Error::new("port prediction not applicable"))?;
     if read_frame(&mut stream).await? != b"go" {
         bail!("punch coordination failed");
@@ -156,8 +158,9 @@ pub async fn respond(node: &Node, peer: PeerId, mut stream: Stream) -> Result<Op
 async fn punch(node: &Node, peer: PeerId, role: Role) -> Result<Option<Node>> {
     match role {
         Role::Sprayer { target_ip } => {
-            spray(node, peer, target_ip).await;
+            // Mark first: the connection arrives (and is used) mid-spray.
             node.mark_punched(peer, PathKind::PortPredicted);
+            spray(node, peer, target_ip).await;
             Ok(None)
         }
         Role::Strict { target } => {

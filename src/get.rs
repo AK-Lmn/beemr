@@ -70,18 +70,37 @@ pub async fn run(options: GetOptions, profile: Profile) -> Result<PathBuf> {
                 responder: route.peer,
             };
             let path = node.path_to(&route.peer);
-            download(Framed::new(stream), &binding, path, &ticket, &options, &profile).await
+            download(
+                Framed::new(stream),
+                &binding,
+                path,
+                &ticket,
+                &options,
+                &profile,
+            )
+            .await
         }
         Connection::Tor(mut tor) => {
             // A fresh nonce binds this connection's handshake (see PROTOCOL.md).
             let nonce: [u8; 32] = crypto::random();
-            with_timeout(async { Ok(futures::AsyncWriteExt::write_all(&mut tor.stream, &nonce).await?) }).await?;
+            with_timeout(async {
+                Ok(futures::AsyncWriteExt::write_all(&mut tor.stream, &nonce).await?)
+            })
+            .await?;
             let binding = Binding::Tor {
                 onion: tor.onion,
                 nonce,
             };
             let path = Some(PathKind::Tor);
-            download(Framed::new(tor.stream), &binding, path, &ticket, &options, &profile).await
+            download(
+                Framed::new(tor.stream),
+                &binding,
+                path,
+                &ticket,
+                &options,
+                &profile,
+            )
+            .await
         }
     }
 }

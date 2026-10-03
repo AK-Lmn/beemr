@@ -14,6 +14,8 @@
 #              something else and relays for them           → relayed through a user's beemr
 #   --no-relay no relay at all: transfers must fail with a clear explanation
 #
+# RELAYS=1 starts a single dedicated relay instead of two.
+#
 # Needs a static Linux build of beemr; set BIN to its path (default:
 # target/x86_64-unknown-linux-musl/release/beemr). CI runs this on every push.
 set -euo pipefail
@@ -39,16 +41,20 @@ cleanup() {
   docker rm -f $(docker ps -aq --filter "name=^${P}-") >/dev/null 2>&1 || true
   for net in inet lan-a lan-b; do docker network rm "$P-$net" >/dev/null 2>&1 || true; done
 }
-trap cleanup EXIT
+[[ -n "${KEEP:-}" ]] || trap cleanup EXIT   # KEEP=1 leaves the lab running for inspection
 cleanup
 
 # The lab networks have no internet access, so bake the tools into an image first.
 printf 'FROM alpine:3.20\nRUN apk add --no-cache iptables iproute2\n' \
   | docker build -q -t "$IMAGE" - >/dev/null
 
-docker network create --internal --subnet 172.30.0.0/24 "$P-inet" >/dev/null
-docker network create --internal --subnet 10.10.1.0/24 "$P-lan-a" >/dev/null
-docker network create --internal --subnet 10.10.2.0/24 "$P-lan-b" >/dev/null
+# Newer Docker Desktop drops routed traffic on internal networks; set
+# LAB_INTERNAL=0 there (the lab then has a route out, which beemr ignores).
+INTERNAL=--internal
+[[ "${LAB_INTERNAL:-1}" == 0 ]] && INTERNAL=
+docker network create $INTERNAL --subnet 172.30.0.0/24 "$P-inet" >/dev/null
+docker network create $INTERNAL --subnet 10.10.1.0/24 "$P-lan-a" >/dev/null
+docker network create $INTERNAL --subnet 10.10.2.0/24 "$P-lan-b" >/dev/null
 
 DHT_ENV=(-e BEEMR_ISOLATED=1 -e BEEMR_DHT_PORT=6881
          -e BEEMR_DHT_BOOTSTRAP=172.30.0.3:6881,172.30.0.4:6881)
@@ -67,7 +73,7 @@ if [[ $WITH_RELAY == 1 ]]; then
   # Two relays, so each device has two peers reporting its external address
   # (that's how beemr tells cone from symmetric NAT).
   run relay  inet 172.30.0.5 "${DHT_ENV[@]}" -e BEEMR_HOME=/data "$IMAGE" beemr relay run
-  run relay2 inet 172.30.0.6 "${DHT_ENV[@]}" -e BEEMR_HOME=/data "$IMAGE" beemr relay run
+  [[ "${RELAYS:-2}" == 1 ]] || run relay2 inet 172.30.0.6 "${DHT_ENV[@]}" -e BEEMR_HOME=/data "$IMAGE" beemr relay run
 fi
 if [[ $MODE == peerrelay ]]; then
   # Another beemr user with a public address, sharing something unrelated.
@@ -83,9 +89,13 @@ make_router() {  # name lan-net lan-ip inet-ip masquerade-options
   docker exec "$P-$name" sh -c "
     IF=\$(ip -o -4 addr show | awk '/$4/ {print \$2}')
     iptables -t nat -A POSTROUTING -o \$IF -j MASQUERADE $5
-    # Like a home router: drop unsolicited inbound traffic from the internet.
-    iptables -A FORWARD -i \$IF -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-    iptables -A FORWARD -i \$IF -j DROP"
+    # Like a home router: drop unsolicited inbound traffic from the internet,
+    # both to the LAN and to the router itself. (Accepting it locally would
+    # leave conntrack entries that force the NAT onto other ports.)
+    for chain in FORWARD INPUT; do
+      iptables -A \$chain -i \$IF -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+      iptables -A \$chain -i \$IF -j DROP
+    done"
 }
 echo "== starting NAT routers (a: ${RANDOM_A:-cone}, b: ${RANDOM_B:-cone})"
 make_router nat-a lan-a 10.10.1.2 172.30.0.10 "$RANDOM_A"

@@ -12,7 +12,8 @@ beemr \- peer\-to\-peer file sharing
 .IR time ]
 .RB [ \-p
 .IR port ]
-.RB [ \-\-no\-upnp ]
+.RB [ \-\-no\-port\-mapping ]
+.RB [ \-\-no\-relay ]
 .br
 .B beemr get
 .I ticket
@@ -26,8 +27,12 @@ beemr \- peer\-to\-peer file sharing
 sends files and folders straight to another device, with no servers,
 accounts or setup.
 It connects directly when it can (same network, IPv6, or a port opened on the
-router with UPnP), punches through NATs when it can't, and falls back to
-relaying through other beemr devices.
+router with UPnP, PCP or NAT\-PMP), punches through NATs when it can't (hole
+punching, or port prediction for strict NATs), and otherwise relays through
+another beemr device or, as a last resort, Tor.
+Both sides print a
+.B How:
+line naming the path a transfer took.
 Devices find each other through signed records on the BitTorrent Mainline DHT.
 All traffic is end\-to\-end encrypted.
 .PP
@@ -63,8 +68,8 @@ Manage saved contacts.
 Run a relay for devices that can't connect directly, or configure relays to use.
 .TP
 .B doctor
-Report how reachable this device is: local network, IPv6, UPnP, direct
-reachability, hole punching and relays.
+Report how reachable this device is: local network, IPv6, router port
+mapping, network (NAT) type, direct reachability, hole punching and relays.
 .SH SHARE OPTIONS
 .TP
 .BI \-\-to " contact\-or\-id"
@@ -80,8 +85,14 @@ Stop accepting downloads after a time such as 30s, 10m, 2h or 1d.
 .BI "\-p, \-\-port " port
 Listen on this TCP and UDP port instead of a random one.
 .TP
-.B \-\-no\-upnp
-Don't ask the router to open a port.
+.B \-\-no\-port\-mapping
+Don't ask the router to open a port with UPnP, PCP or NAT\-PMP.
+.TP
+.B \-\-no\-relay
+Don't relay end\-to\-end encrypted traffic for other beemr users while
+sharing.
+By default, a sharer that is reachable from the internet relays for devices
+that can't connect directly, until the share ends.
 .SH ENVIRONMENT
 .TP
 .B BEEMR_HOME

@@ -138,6 +138,7 @@ cmp -s "$W/alice/files/report.pdf" "$W/sara/dl/report.pdf" && pass "report.pdf a
 wait_exit "$SHARE_PID" 20 && pass "the sharer stops after one download (default)" || fail "sharer kept running after 1 download"
 grep -q "download limit reached" "$SHARE_LOG.err" && pass "the sharer says the limit was reached" || fail "limit message" "$(cat "$SHARE_LOG.err")"
 grep -q "Sending to Sara" "$SHARE_LOG.err" && pass "the sharer shows Sara by her contact name" || fail "sharer shows contact name" "$(cat "$SHARE_LOG.err")"
+grep -q "How: direct connection, same Wi-Fi/LAN" "$SHARE_LOG.err" && pass "the sharer says how the file travelled" || fail "sharer How: line" "$(cat "$SHARE_LOG.err")"
 expect_fail "the same ticket can't be used again" "couldn't|reach|find" bp sara get "$TICKET" -o "$W/sara/dl"
 
 share alice "$W/alice/files/photos" -n 3 -e 2h
@@ -154,7 +155,7 @@ share alice "$W/alice/files/contract.pdf" --to sara
 grep -q "Who can download:  only Sara" "$SHARE_LOG.err" && pass "share --to sara shows who can download" || fail "--to display" "$(cat "$SHARE_LOG.err")"
 expect_fail "Eve is refused (--to sara)" "different device" bp eve get "$TICKET" -o "$W/sara/dl"
 grep -q "Refused" "$SHARE_LOG.err" && pass "the sharer reports the refused device" || fail "refusal not reported"
-expect "Sara can download (--to sara)" "Saved to" bp sara get "$TICKET" -o "$W/sara/dl"
+expect "Sara can download (--to sara) and sees how it travelled" "How: direct connection, same Wi-Fi/LAN" bp sara get "$TICKET" -o "$W/sara/dl"
 wait_exit "$SHARE_PID" 20 && pass "the sharer stops after Sara's download" || fail "sharer kept running"
 
 share alice "$W/alice/files/report.pdf" -e 2s
@@ -163,7 +164,7 @@ wait_exit "$SHARE_PID" 10 && grep -q "expired" "$SHARE_LOG.err" && pass "share -
 expect_fail "an expired share is refused" "couldn't|reach|expired" bp sara get "$TICKET" -o "$W/sara/dl"
 
 PORT=$((30000 + RANDOM % 5000))
-share alice "$W/alice/files/report.pdf" -p "$PORT" --no-upnp -n 0
+share alice "$W/alice/files/report.pdf" -p "$PORT" --no-port-mapping -n 0
 python3 - "$TICKET" "$PORT" <<'EOF' && pass "share -p $PORT listens on the requested port" || fail "share -p"
 import base64, sys
 t = sys.argv[1]; b = base64.urlsafe_b64decode(t + "=" * (-len(t) % 4))
