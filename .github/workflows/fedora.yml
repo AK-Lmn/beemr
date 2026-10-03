@@ -1,0 +1,93 @@
+name: Fedora package
+
+# Builds the Fedora package from packaging/fedora/beemr.spec exactly as Fedora
+# would: from the release source tarball plus a vendor tarball of crate
+# dependencies (Windows-only crates removed), offline, then runs rpmlint.
+# Called by the release workflow; can also be run by hand for any version.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release tag, e.g. v0.2.1
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag, e.g. v0.2.1
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.version }}
+
+jobs:
+  vendor:
+    name: Vendor tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.version }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Vendor crates for Fedora's architectures
+        run: |
+          cargo install cargo-vendor-filterer --locked
+          cargo vendor-filterer --locked \
+            --platform=x86_64-unknown-linux-gnu \
+            --platform=aarch64-unknown-linux-gnu \
+            --platform=powerpc64le-unknown-linux-gnu \
+            --platform=s390x-unknown-linux-gnu \
+            vendor
+          version="${TAG#v}"
+          tar -cJf "beemr-${version}-vendor.tar.xz" vendor
+          ls -lh "beemr-${version}-vendor.tar.xz"
+          echo "crates: $(ls vendor | wc -l)"
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "beemr-${TAG#v}-vendor.tar.xz" --clobber
+
+  rpm:
+    name: Build and lint on Fedora
+    needs: vendor
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install packaging tools
+        run: dnf install -y -q rpm-build rpmdevtools rpmlint cargo-rpm-macros rust cargo git-core
+      - uses: actions/checkout@v5
+      - name: Fetch sources
+        run: |
+          rpmdev-setuptree
+          version="${TAG#v}"
+          sed -i "s/^Version:.*/Version:        ${version}/" packaging/fedora/beemr.spec
+          spectool -g -C ~/rpmbuild/SOURCES packaging/fedora/beemr.spec
+          ls -l ~/rpmbuild/SOURCES
+      - name: Build the source and binary packages
+        run: |
+          rpmbuild -ba packaging/fedora/beemr.spec 2>&1 | tee build.log
+          grep -A200 "cargo_license_summary\|^# " build.log | sed -n '/^# /,/^[^#]/p' | head -60 > license-summary.txt || true
+      - name: Check the package installs and runs
+        run: |
+          dnf install -y ~/rpmbuild/RPMS/*/beemr-[0-9]*.rpm
+          beemr --version
+          BEEMR_HOME=/tmp/b beemr setup --name "Fedora build" --no-service
+      - name: rpmlint
+        run: |
+          rpmlint packaging/fedora/beemr.spec ~/rpmbuild/SRPMS/*.src.rpm ~/rpmbuild/RPMS/*/*.rpm | tee rpmlint.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fedora-package
+          path: |
+            packaging/fedora/beemr.spec
+            ~/rpmbuild/SRPMS/*.src.rpm
+            ~/rpmbuild/RPMS/*/*.rpm
+            build.log
+            license-summary.txt
+            rpmlint.txt
