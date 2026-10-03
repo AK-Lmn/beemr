@@ -22,6 +22,21 @@ env:
   VERSION_TAG: ${{ inputs.version }}
 
 jobs:
+  snap:
+    name: Snap Store on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: sudo snap install beemr (nothing else)
+        run: |
+          sudo snap install beemr
+          snap list beemr
+          beemr --version
+          beemr --version | grep -q "${VERSION_TAG#v}"
+          beemr setup --name "Snap CI" --no-service
+          beemr id
+      - name: Background service started by the snap
+        run: snap services beemr
+
   install:
     name: Install on ${{ matrix.distro }}
     runs-on: ubuntu-latest
