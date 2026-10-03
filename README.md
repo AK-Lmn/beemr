@@ -108,6 +108,9 @@ sudo zypper install beemr
 | Alpine | `apk add --allow-untrusted beemr_*.apk` from [releases](https://github.com/osmanahmadxai/beemr/releases/latest) |
 | Anything else | static binaries on the [releases page](https://github.com/osmanahmadxai/beemr/releases/latest) |
 
+After installing with a package manager, run `beemr setup` once to name the
+device and start the background service that receives messages.
+
 The APT and RPM repositories are signed with key
 `5B5C C4E3 B2D2 FD72 1EA8 ECC9 2FF3 31B1 D566 DAFA`, and updates arrive
 through your normal system updates. Nothing else is required: no Docker, no

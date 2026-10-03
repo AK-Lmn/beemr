@@ -27,27 +27,49 @@ impl Launch {
     }
 }
 
-/// Whether beemr runs as a snap, where snapd manages the background service
-/// (the snap's `daemon` app starts automatically for every user).
+/// Whether beemr runs as a snap. Snaps can't register systemd units, so the
+/// background service uses snap's own autostart instead: the `daemon` app
+/// declares `autostart: beemr-daemon.desktop`, and snapd launches it at
+/// desktop login once that file exists in the snap's user data.
 fn in_snap() -> bool {
     std::env::var_os("SNAP").is_some()
 }
 
+fn snap_autostart_file() -> Result<PathBuf> {
+    let data = std::env::var_os("SNAP_USER_DATA").context("SNAP_USER_DATA is not set")?;
+    Ok(PathBuf::from(data).join(".config/autostart/beemr-daemon.desktop"))
+}
+
 /// Install autostart and start the service now.
 pub fn install(config: &Config) -> Result<String> {
-    if in_snap() {
-        return Ok("is managed by snap and starts automatically".into());
-    }
     let launch = Launch::current()?;
+    if in_snap() {
+        let path = snap_autostart_file()?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).context(dir.display())?;
+        }
+        std::fs::write(
+            &path,
+            "[Desktop Entry]\nType=Application\nName=beemr background service\nExec=beemr.daemon\nNoDisplay=true\n",
+        )
+        .context(path.display())?;
+        if !crate::daemon::is_running(config) {
+            spawn_detached(config, &launch)?;
+        }
+        return Ok("starts automatically when you log in (snap autostart)".into());
+    }
     platform::install(config, &launch)
 }
 
 /// Stop the service and remove autostart.
 pub fn uninstall(config: &Config) -> Result<()> {
     if in_snap() {
-        bail!(
-            "the snap manages the background service; stop it with: snap stop --user beemr.daemon"
-        );
+        let path = snap_autostart_file()?;
+        if path.exists() {
+            std::fs::remove_file(&path).context(path.display())?;
+        }
+        let _ = run("pkill", &["-f", "beemr daemon run"]);
+        return Ok(());
     }
     platform::uninstall(config)
 }
@@ -75,7 +97,6 @@ fn run(program: &str, args: &[&str]) -> Result<()> {
 
 /// Start the service as a detached background process (fallback when the
 /// platform's service manager isn't available).
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn spawn_detached(config: &Config, launch: &Launch) -> Result<()> {
     let log = std::fs::OpenOptions::new()
         .create(true)

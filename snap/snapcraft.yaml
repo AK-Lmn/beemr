@@ -33,12 +33,11 @@ apps:
       # Keep identity, contacts and inbox across snap updates.
       BEEMR_HOME: $SNAP_USER_COMMON
     plugs: [network, network-bind, home, removable-media]
-  # Receives messages in the background for every logged-in user.
+  # The background service that receives messages. `beemr setup` starts it
+  # and registers it to start at every desktop login (snap autostart).
   daemon:
     command: bin/beemr daemon run
-    daemon: simple
-    daemon-scope: user
-    restart-condition: always
+    autostart: beemr-daemon.desktop
     environment:
       BEEMR_HOME: $SNAP_USER_COMMON
     plugs: [network, network-bind]
