@@ -439,8 +439,9 @@ impl Ladder<'_> {
                     .filter(|(_, relay)| relay.is_some_and(|r| self.is_full_relay(&r)))
                     .map(|(id, _)| *id)
                     .collect();
-                if !full.is_empty() {
-                    self.keep_only(&peer, &full).await;
+                if let Some(&first) = full.first() {
+                    // One relay is enough, and both sides then agree on it.
+                    self.keep_only(&peer, &[first]).await;
                     return Ok(Some(Route::on(peer)));
                 }
                 if self.full_relay_dials.is_empty() {
