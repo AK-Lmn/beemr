@@ -892,8 +892,9 @@ async fn with_timeout<T>(future: impl std::future::Future<Output = Result<T>>) -
 }
 
 fn copy_to_clipboard(text: &str) {
-    if let Err(e) = try_copy_to_clipboard(text) {
-        eprintln!("Note: Could not copy ticket to clipboard: {e}");
+    match try_copy_to_clipboard(text) {
+        Ok(()) => eprintln!("  ✓ Copied the command to the clipboard"),
+        Err(e) => eprintln!("  ✗ {e}"),
     }
 }
 
@@ -901,11 +902,13 @@ fn try_copy_to_clipboard(text: &str) -> std::result::Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         run_clipboard_cmd("clip.exe", &[], text)
+            .map_err(|_| "Couldn't copy to the clipboard".to_string())
     }
 
     #[cfg(target_os = "macos")]
     {
         run_clipboard_cmd("pbcopy", &[], text)
+            .map_err(|_| "Couldn't copy to the clipboard".to_string())
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -916,14 +919,12 @@ fn try_copy_to_clipboard(text: &str) -> std::result::Result<(), String> {
             ("xsel", &["--clipboard", "--input"]),
         ];
 
-        let mut errors = Vec::new();
         for (cmd, args) in tools {
-            match run_clipboard_cmd(cmd, args, text) {
-                Ok(()) => return Ok(()),
-                Err(e) => errors.push(format!("{cmd}: {e}")),
+            if run_clipboard_cmd(cmd, args, text).is_ok() {
+                return Ok(());
             }
         }
-        Err(format!("no working clipboard command found ({})", errors.join(", ")))
+        Err("Couldn't copy to the clipboard (install wl-clipboard, xclip or xsel)".to_string())
     }
 }
 
@@ -935,7 +936,7 @@ fn run_clipboard_cmd(cmd: &str, args: &[&str], text: &str) -> std::result::Resul
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .map_err(|e| e.to_string())?;
 
@@ -943,21 +944,12 @@ fn run_clipboard_cmd(cmd: &str, args: &[&str], text: &str) -> std::result::Resul
         stdin
             .write_all(text.as_bytes())
             .map_err(|e| e.to_string())?;
-    }
+    } // stdin is dropped here, so the tool sees end-of-file
 
-    let output = child
-        .wait_with_output()
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if status.success() {
         Ok(())
     } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let err = err.trim();
-        if err.is_empty() {
-            Err(format!("command exited with {}", output.status))
-        } else {
-            Err(err.to_string())
-        }
+        Err(format!("exited with {status}"))
     }
 }

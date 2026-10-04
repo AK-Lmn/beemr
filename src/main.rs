@@ -36,6 +36,7 @@ Share options:
   -p, --port <port>       Listen on this port (default: random)
   --no-port-mapping       Don't ask the router to open a port (UPnP, PCP, NAT-PMP)
   --no-relay              Don't relay for other beemr users while sharing
+  --copy                  Copy the beemr get command to the clipboard
 ";
 
 #[tokio::main]
